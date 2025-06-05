@@ -18,6 +18,7 @@ aiohttp
 aiofiles
 pySmartDL
 lexica-api
+ffmpeg-python
 google-generativeai
 pytgcalls==3.0.0.dev24
 pytz
