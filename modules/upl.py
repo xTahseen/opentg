@@ -1,19 +1,3 @@
-#  Moon-Userbot - telegram userbot
-#  Copyright (C) 2020-present Moon Userbot Organization
-#
-#  This program is free software: you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation, either version 3 of the License, or
-#  (at your option) any later version.
-#
-#  This program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 import io
 import os
 import time
@@ -67,7 +51,7 @@ async def dlf(client: Client, message: Message):
         await message.edit(f"<b>Usage: </b><code>{prefix}dlf [reply to a file]</code>")
 
 
-@Client.on_message(filters.command("moonlogs", prefix) & filters.me)
+@Client.on_message(filters.command("opentg", prefix) & filters.me)
 async def mupl(client: Client, message: Message):
     link = "moonlogs.txt"
     if os.path.exists(link):
@@ -76,7 +60,7 @@ async def mupl(client: Client, message: Message):
             with open(link, "rb") as f:
                 data = f.read()
             bio = io.BytesIO(data)
-            bio.name = "moonlogs.txt"
+            bio.name = "opentg.txt"
             await client.send_document(
                 message.chat.id,
                 bio,
@@ -128,5 +112,5 @@ modules_help["uplud"] = {
     "upl [filepath]/[reply to path]*": "Upload a file from your local machine to Telegram",
     "dlf": "Download a file from Telegram to your local machine",
     "uplr [filepath]/[reply to path]*": "Upload a file from your local machine to Telegram, delete the file after uploading",
-    "moonlogs": "Upload the moonlogs.txt file to Telegram",
+    "opentg": "Upload the opentg.txt file to Telegram",
 }
