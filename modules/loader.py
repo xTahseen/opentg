@@ -1,29 +1,10 @@
-#  Moon-Userbot - telegram userbot
-#  Copyright (C) 2020-present Moon Userbot Organization
-#
-#  This program is free software: you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation, either version 3 of the License, or
-#  (at your option) any later version.
-
-#  This program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#  GNU General Public License for more details.
-
-#  You should have received a copy of the GNU General Public License
-#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-import hashlib
 import os
 import shutil
 import subprocess
 import sys
-
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
-
 from utils.misc import modules_help, prefix
 from utils.scripts import restart
 from utils.db import db
@@ -46,24 +27,6 @@ CATEGORIES = [
     "tts",
     "utils",
 ]
-
-
-@Client.on_message(filters.command(["modhash", "mh"], prefix) & filters.me)
-async def get_mod_hash(_, message: Message):
-    if len(message.command) == 1:
-        return
-    url = message.command[1].lower()
-    resp = requests.get(url)
-    if not resp.ok:
-        await message.edit(
-            f"<b>Troubleshooting with downloading module <code>{url}</code></b>"
-        )
-        return
-
-    await message.edit(
-        f"<b>Module hash: <code>{hashlib.sha256(resp.content).hexdigest()}</code>\n"
-        f"Link: <code>{url}</code>\nFile: <code>{url.split('/')[-1]}</code></b>",
-    )
 
 
 @Client.on_message(filters.command(["loadmod", "lm"], prefix) & filters.me)
@@ -104,26 +67,6 @@ async def loadmod(_, message: Message):
                 )
                 return
         else:
-            modules_hashes = requests.get(
-                "https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/modules_hashes.txt"
-            ).text
-            resp = requests.get(url)
-
-            if not resp.ok:
-                await message.edit(
-                    f"<b>Troubleshooting with downloading module <code>{url}</code></b>",
-                )
-                return
-
-            if hashlib.sha256(resp.content).hexdigest() not in modules_hashes:
-                return await message.edit(
-                    "<b>Only <a href=https://github.com/The-MoonTg-project/custom_modules/tree/main/modules_hashes.txt>"
-                    "verified</a> modules or from the official "
-                    "<a href=https://github.com/The-MoonTg-project/custom_modules>"
-                    "custom_modules</a> repository are supported!</b>",
-                    disable_web_page_preview=True,
-                )
-
             module_name = url.split("/")[-1].split(".")[0]
 
         resp = requests.get(url)
@@ -138,24 +81,18 @@ async def loadmod(_, message: Message):
             f.write(resp.content)
     else:
         file_name = await message.reply_to_message.download()
+        if not file_name:
+            await message.edit("<b>Failed to download the file.</b>")
+            return
+
+        if not os.path.exists(f"{BASE_PATH}/modules/custom_modules"):
+            os.mkdir(f"{BASE_PATH}/modules/custom_modules")
+
         module_name = message.reply_to_message.document.file_name[:-3]
+        if not os.path.exists(file_name):
+            await message.edit(f"<b>File <code>{file_name}</code> does not exist.</b>")
+            return
 
-        with open(file_name, "rb") as f:
-            content = f.read()
-
-        modules_hashes = requests.get(
-            "https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/modules_hashes.txt"
-        ).text
-
-        if hashlib.sha256(content).hexdigest() not in modules_hashes:
-            os.remove(file_name)
-            return await message.edit(
-                "<b>Only <a href=https://github.com/The-MoonTg-project/custom_modules/tree/main/modules_hashes.txt>"
-                "verified</a> modules or from the official "
-                "<a href=https://github.com/The-MoonTg-project/custom_modules>"
-                "custom_modules</a> repository are supported!</b>",
-                disable_web_page_preview=True,
-            )
         os.rename(file_name, f"./modules/custom_modules/{module_name}.py")
 
     all_modules = db.get("custom.modules", "allModules", [])
@@ -175,6 +112,7 @@ async def loadmod(_, message: Message):
         },
     )
     restart()
+
 
 
 @Client.on_message(filters.command(["unloadmod", "ulm"], prefix) & filters.me)
@@ -322,19 +260,14 @@ async def updateallmods(_, message: Message):
 
 
 modules_help["loader"] = {
-    "loadmod [module_name]*": "Download module.\n"
-    "Only modules from the official custom_modules repository and proven "
-    "modules whose hashes are in modules_hashes.txt are supported",
-    "unloadmod [module_name]*": "Delete module",
-    "modhash [link]*": "Get module hash by link",
-    "loadallmods": "Load all custom modules (use it at your own risk)",
-    "unloadallmods": "Unload all custom modules",
-    "updateallmods": "Update all custom modules"
-    "\n\n* - required argument"
-    "\n <b>short cmds:</b>"
-    "\n loadmod - lm"
-    "\n unloadmod - ulm"
-    "\n modhash - mh"
-    "\n loadallmods - lmall"
-    "\n unloadallmods - ulmall",
+    "loadmod [module_name]*": "Download and load a module.\nModules can be loaded from any source without hash verification.",
+    "unloadmod [module_name]*": "Delete module.",
+    "loadallmods": "Load all custom modules (use at your own risk).",
+    "unloadallmods": "Unload all custom modules.",
+    "updateallmods": "Update all custom modules.",
+    "* - required argument": "\n<b>Short cmds:</b>"
+    "\nloadmod - lm"
+    "\nunloadmod - ulm"
+    "\nloadallmods - lmall"
+    "\nunloadallmods - ulmall",
 }
