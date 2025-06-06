@@ -165,42 +165,69 @@ async def gchat(client: Client, message: Message):
         bot_role = db.get(collection, f"custom_roles.{user_id}") or default_role
         chat_history = get_chat_history(user_id, user_message, user_name)
 
-        await asyncio.sleep(random.choice([4, 8, 10]))
-        await send_typing_action(client, message.chat.id, user_message)
+        if not hasattr(client, "message_buffer"):
+            client.message_buffer = {}
+            client.message_timers = {}
 
-        gemini_keys = db.get(collection, "gemini_keys") or [gemini_key]
-        current_key_index = db.get(collection, "current_key_index") or 0
-        retries = len(gemini_keys) * 2
+        if user_id not in client.message_buffer:
+            client.message_buffer[user_id] = []
+            client.message_timers[user_id] = None
 
-        while retries > 0:
-            try:
-                current_key = gemini_keys[current_key_index]
-                genai.configure(api_key=current_key)
-                model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
-                model.safety_settings = safety_settings
+        client.message_buffer[user_id].append(user_message)
 
-                prompt = build_prompt(bot_role, chat_history, user_message)
-                response = model.start_chat().send_message(prompt)
-                bot_response = response.text.strip()
+        if client.message_timers[user_id]:
+            client.message_timers[user_id].cancel()
 
-                chat_history.append(bot_response)
-                db.set(collection, f"chat_history.{user_id}", chat_history)
+        async def process_combined_messages():
+            await asyncio.sleep(8)
+            buffered_messages = client.message_buffer.pop(user_id, [])
+            client.message_timers[user_id] = None
 
-                if await handle_voice_message(client, message.chat.id, bot_response):
-                    return
+            if not buffered_messages:
+                return
 
-                return await message.reply_text(bot_response)
-            except Exception as e:
-                if "429" in str(e) or "invalid" in str(e).lower():
-                    retries -= 1
-                    if retries % 2 == 0:
-                        current_key_index = (current_key_index + 1) % len(gemini_keys)
-                        db.set(collection, "current_key_index", current_key_index)
-                    await asyncio.sleep(4)
-                else:
-                    raise e
+            combined_message = " ".join(buffered_messages)
+            chat_history = get_chat_history(user_id, combined_message, user_name)
+
+            await asyncio.sleep(random.choice([3, 5, 7]))
+            await send_typing_action(client, message.chat.id, combined_message)
+
+            gemini_keys = db.get(collection, "gemini_keys") or [gemini_key]
+            current_key_index = db.get(collection, "current_key_index") or 0
+            retries = len(gemini_keys) * 2
+
+            while retries > 0:
+                try:
+                    current_key = gemini_keys[current_key_index]
+                    genai.configure(api_key=current_key)
+                    model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
+                    model.safety_settings = safety_settings
+
+                    prompt = build_prompt(bot_role, chat_history, combined_message)
+                    response = model.start_chat().send_message(prompt)
+                    bot_response = response.text.strip()
+
+                    chat_history.append(bot_response)
+                    db.set(collection, f"chat_history.{user_id}", chat_history)
+
+                    if await handle_voice_message(client, message.chat.id, bot_response):
+                        return
+
+                    return await message.reply_text(bot_response)
+                except Exception as e:
+                    if "429" in str(e) or "invalid" in str(e).lower():
+                        retries -= 1
+                        if retries % 2 == 0:
+                            current_key_index = (current_key_index + 1) % len(gemini_keys)
+                            db.set(collection, "current_key_index", current_key_index)
+                        await asyncio.sleep(4)
+                    else:
+                        raise e
+
+        client.message_timers[user_id] = asyncio.create_task(process_combined_messages())
+
     except Exception as e:
-        return await client.send_message("me", f"An error occurred in the `gchat` module:\n\n{str(e)}")
+        await client.send_message("me", f"An error occurred in the `gchat` module:\n\n{str(e)}")
         
 @Client.on_message(filters.private & ~filters.me & ~filters.bot, group=1)
 async def handle_files(client: Client, message: Message):
@@ -363,26 +390,6 @@ async def switch_role(client: Client, message: Message):
     except Exception as e:
         await client.send_message("me", f"Error in switch command:\n\n{str(e)}")
 
-@Client.on_message(filters.command("default", prefix) & filters.me)
-async def set_default_role(client: Client, message: Message):
-    try:
-        parts = message.text.strip().split()
-        if len(parts) < 2:
-            await message.edit_text("<b>Usage:</b> setdefaultrole <role_name>")
-            return
-
-        role_name = parts[1].lower()
-        roles = await fetch_roles()
-
-        if role_name in roles:
-            db.set(collection, "default_role", role_name)
-            await message.edit_text(f"<b>Default role updated to:</b> {role_name}")
-        else:
-            await message.edit_text(f"<b>Error:</b> Role '{role_name}' not found in roles.json")
-
-    except Exception as e:
-        await client.send_message("me", f"An error occurred in the `setdefaultrole` command:\n\n{str(e)}")
-        
 @Client.on_message(filters.command("role", prefix) & filters.me)
 async def set_custom_role(client: Client, message: Message):
     try:
@@ -419,6 +426,26 @@ async def set_custom_role(client: Client, message: Message):
     except Exception as e:
         await client.send_message("me", f"Error in `role` command:\n\n{str(e)}")        
 
+@Client.on_message(filters.command("default", prefix) & filters.me)
+async def set_default_role(client: Client, message: Message):
+    try:
+        parts = message.text.strip().split()
+        if len(parts) < 2:
+            await message.edit_text("<b>Usage:</b> setdefaultrole <role_name>")
+            return
+
+        role_name = parts[1].lower()
+        roles = await fetch_roles()
+
+        if role_name in roles:
+            db.set(collection, "default_role", role_name)
+            await message.edit_text(f"<b>Default role updated to:</b> {role_name}")
+        else:
+            await message.edit_text(f"<b>Error:</b> Role '{role_name}' not found in roles.json")
+
+    except Exception as e:
+        await client.send_message("me", f"An error occurred in the `setdefaultrole` command:\n\n{str(e)}")
+        
 @Client.on_message(filters.command("setgkey", prefix) & filters.me)
 async def set_gemini_key(client: Client, message: Message):
     try:
@@ -438,7 +465,7 @@ async def set_gemini_key(client: Client, message: Message):
                 current_key_index = index
                 db.set(collection, "current_key_index", current_key_index)
                 genai.configure(api_key=gemini_keys[current_key_index])
-                model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
+                model = genai.GenerativeModel("gemini-2.0-flash")
                 model.safety_settings = safety_settings
                 await message.edit_text(f"Current Gemini API key set to key {key}.")
             else:
@@ -459,6 +486,7 @@ async def set_gemini_key(client: Client, message: Message):
             current_key = gemini_keys[current_key_index] if gemini_keys else "None"
             await message.edit_text(f"<b>Gemini API keys:</b>\n\n<code>{keys_list}</code>\n\n<b>Current key:</b> <code>{current_key}</code>")
 
+        await asyncio.sleep(1)
     except Exception as e:
         await client.send_message("me", f"An error occurred in the `setgkey` command:\n\n{str(e)}")
 
