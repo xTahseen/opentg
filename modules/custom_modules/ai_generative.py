@@ -13,27 +13,35 @@ COOK_GEN_CONFIG = {
     "temperature": 0.35, "top_p": 0.95, "top_k": 40, "max_output_tokens": 1024
 }
 
+def _valid_file(reply, file_type):
+    if file_type == "image":
+        return getattr(reply, "photo", None) is not None
+    if file_type in {"audio", "video"}:
+        return any(getattr(reply, attr, False) for attr in ("audio", "voice", "video", "video_note"))
+    return False
+
 async def process_file(message, prompt, model_mode, file_type, status_msg, display_prompt=False):
-    await message.edit_text(f"<code>{status_msg}</code>")
     reply = message.reply_to_message
     if not reply:
         return await message.edit_text(
             f"<b>Usage:</b> <code>{prefix}{message.command[0]} [custom prompt]</code> [Reply to a {file_type}]"
         )
+    if not _valid_file(reply, file_type):
+        return await message.edit_text(f"<code>Invalid {file_type} file. Please try again.</code>")
+
+    await message.edit_text(f"<code>{status_msg}</code>")
     file_path = await reply.download()
     if not file_path or not os.path.exists(file_path):
         return await message.edit_text("<code>Failed to process the file. Try again.</code>")
-    model = (
-        genai.GenerativeModel(MODEL_NAME, generation_config=COOK_GEN_CONFIG)
-        if model_mode == "cook"
-        else genai.GenerativeModel(MODEL_NAME)
+    model = genai.GenerativeModel(
+        MODEL_NAME, generation_config=COOK_GEN_CONFIG if model_mode == "cook" else None
     )
     try:
-        if file_type == "image" and reply.photo:
+        if file_type == "image":
             with Image.open(file_path) as img:
                 img.verify()
                 input_data = [prompt, img]
-        elif file_type in {"audio", "video"} and any(getattr(reply, attr, False) for attr in ("audio", "voice", "video", "video_note")):
+        else:  # audio or video
             uploaded_file = genai.upload_file(file_path)
             while uploaded_file.state.name == "PROCESSING":
                 await asyncio.sleep(5)
@@ -45,8 +53,6 @@ async def process_file(message, prompt, model_mode, file_type, status_msg, displ
                     f"<code>File upload did not succeed, status: {uploaded_file.state.name}</code>"
                 )
             input_data = [uploaded_file, prompt]
-        else:
-            return await message.edit_text(f"<code>Invalid {file_type} file. Please try again.</code>")
         for _ in range(3):
             try:
                 response = model.generate_content(input_data)
@@ -58,15 +64,16 @@ async def process_file(message, prompt, model_mode, file_type, status_msg, displ
                     raise
         else:
             raise e
-        result_text = f"**Prompt:** {prompt}\n" if display_prompt else ""
-        result_text += f"**Answer:** {response.text}"
+        result_text = (f"**Prompt:** {prompt}\n" if display_prompt else "") + f"**Answer:** {response.text}"
         await message.edit_text(result_text, parse_mode=enums.ParseMode.MARKDOWN)
     except Exception as e:
         await message.edit_text(f"<code>Error:</code> {format_exc(e)}")
     finally:
         if os.path.exists(file_path):
-            try: os.remove(file_path)
-            except Exception: pass
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
 
 @Client.on_message(filters.command("getai", prefix) & filters.me)
 async def getai(_, message):
