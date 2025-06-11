@@ -18,10 +18,7 @@ safety_settings = [{"category": cat, "threshold": "BLOCK_NONE"} for cat in [
     "HARM_CATEGORY_DANGEROUS_CONTENT", "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", 
     "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_UNSPECIFIED"]]
 
-generation_config = {
-    "max_output_tokens": 40,
-}
-
+generation_config = {"max_output_tokens": 40}
 model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
 model.safety_settings = safety_settings
 
@@ -32,9 +29,7 @@ disabled_users = db.get(collection, "disabled_users") or []
 gchat_for_all = db.get(collection, "gchat_for_all") or False
 
 smileys = ["-.-", "):", ":)", "*.*", ")*"]
-
 la_timezone = pytz.timezone("America/Los_Angeles")
-
 ROLES_URL = "https://gist.githubusercontent.com/iTahseen/00890d65192ca3bd9b2a62eb034b96ab/raw/roles.json"
 
 async def fetch_roles():
@@ -42,10 +37,8 @@ async def fetch_roles():
         response = requests.get(ROLES_URL, timeout=5)
         response.raise_for_status()
         roles = response.json()
-
         if isinstance(roles, dict):
             default_role_name = db.get(collection, "default_role") or "default"
-
             if default_role_name in roles:
                 roles["default"] = roles[default_role_name]
             return roles
@@ -74,17 +67,14 @@ async def generate_gemini_response(input_data, chat_history, user_id):
     retries = 3
     gemini_keys = db.get(collection, "gemini_keys") or [gemini_key]
     current_key_index = db.get(collection, "current_key_index") or 0
-
     while retries > 0:
         try:
             current_key = gemini_keys[current_key_index]
             genai.configure(api_key=current_key)
             model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
             model.safety_settings = safety_settings
-
             response = model.generate_content(input_data)
             bot_response = response.text.strip()
-
             chat_history.append(bot_response)
             db.set(collection, f"chat_history.{user_id}", chat_history)
             return bot_response
@@ -132,6 +122,7 @@ async def handle_sticker(client: Client, message: Message):
             return
         random_smiley = random.choice(smileys)
         await asyncio.sleep(random.uniform(5, 10))
+        await client.read_chat_history(message.chat.id)
         await message.reply_text(random_smiley)
     except Exception as e:
         await client.send_message("me", f"An error occurred in the `handle_sticker` function:\n\n{str(e)}")
@@ -144,6 +135,7 @@ async def handle_gif(client: Client, message: Message):
             return
         random_smiley = random.choice(smileys)
         await asyncio.sleep(random.uniform(5, 10))
+        await client.read_chat_history(message.chat.id)
         await message.reply_text(random_smiley)
     except Exception as e:
         await client.send_message("me", f"An error occurred in the `handle_gif` function:\n\n{str(e)}")
@@ -157,7 +149,6 @@ async def gchat(client: Client, message: Message):
 
         roles = await fetch_roles()
         default_role = roles.get("default")
-
         if not default_role:
             await client.send_message("me", "Error: 'default' role is missing in roles.json.")
             return
@@ -210,6 +201,7 @@ async def gchat(client: Client, message: Message):
                     chat_history.append(bot_response)
                     db.set(collection, f"chat_history.{user_id}", chat_history)
 
+                    await client.read_chat_history(message.chat.id)
                     if await handle_voice_message(client, message.chat.id, bot_response):
                         return
 
@@ -239,7 +231,6 @@ async def handle_files(client: Client, message: Message):
 
         roles = await fetch_roles()
         default_role = roles.get("default")
-
         if not default_role:
             await client.send_message("me", "Error: 'default' role is missing in roles.json.")
             return
@@ -276,6 +267,7 @@ async def handle_files(client: Client, message: Message):
                     input_data = [prompt] + sample_images
                     response = await generate_gemini_response(input_data, chat_history, user_id)
                     
+                    await client.read_chat_history(message.chat.id)
                     if await handle_voice_message(client, message.chat.id, response):
                         return
 
@@ -301,6 +293,7 @@ async def handle_files(client: Client, message: Message):
             input_data = [prompt, uploaded_file]
             response = await generate_gemini_response(input_data, chat_history, user_id)
 
+            await client.read_chat_history(message.chat.id)
             if await handle_voice_message(client, message.chat.id, response):
                 return
 
@@ -316,9 +309,8 @@ async def handle_files(client: Client, message: Message):
 async def gchat_command(client: Client, message: Message):
     try:
         parts = message.text.strip().split()
-
         if len(parts) < 2:
-            await message.edit_text("<b>Usage:</b> gchat `on`, `off`, `del`, or `all` [user_id].")
+            await message.edit_text("<b>Usage:</b> gchat `on`, `off`, `del`, `all`, or `r` [user_id].")
             return
 
         command = parts[1].lower()
@@ -352,8 +344,23 @@ async def gchat_command(client: Client, message: Message):
             db.set(collection, "gchat_for_all", gchat_for_all)
             await message.edit_text(f"{'enabled' if gchat_for_all else 'disabled'} for all.")
 
+        elif command == "r":
+            changed = False
+            if user_id in enabled_users:
+                enabled_users.remove(user_id)
+                db.set(collection, "enabled_users", enabled_users)
+                changed = True
+            if user_id in disabled_users:
+                disabled_users.remove(user_id)
+                db.set(collection, "disabled_users", disabled_users)
+                changed = True
+            if changed:
+                await message.edit_text(f"<b>On/off list removed</b> [{user_id}].")
+            else:
+                await message.edit_text(f"<b>User [{user_id}] was not in on/off lists.</b>")
+
         else:
-            await message.edit_text("<b>Usage:</b> `gchat on`, `off`, `del`, or `all`.")
+            await message.edit_text("<b>Usage:</b> `gchat on`, `off`, `del`, `all`, or `r`.")
 
         await message.delete()
         
@@ -371,7 +378,6 @@ async def switch_role(client: Client, message: Message):
 
         user_id = message.chat.id
         parts = message.text.strip().split()
-
         if len(parts) == 1:
             available_roles = "\n".join([f"- {role}" for role in roles.keys()])
             await message.edit_text(f"<b>Available roles:</b>\n\n{available_roles}")
@@ -384,7 +390,6 @@ async def switch_role(client: Client, message: Message):
             await message.edit_text(f"Switched to: <b>{role_name}</b>")
         else:
             await message.edit_text(f"Role <b>{role_name}</b> not found.")
-
         await message.delete()
 
     except Exception as e:
@@ -395,15 +400,12 @@ async def set_custom_role(client: Client, message: Message):
     try:
         roles = await fetch_roles()
         default_role = roles.get("default")
-
         if not default_role:
             await client.send_message("me", "Error: 'default' role is missing.")
             return
-
         parts = message.text.strip().split()
         user_id = message.chat.id
         custom_role = None
-
         if len(parts) == 2 and parts[1].isdigit():
             user_id = int(parts[1])
         elif len(parts) > 2 and parts[1].isdigit():
@@ -411,7 +413,6 @@ async def set_custom_role(client: Client, message: Message):
             custom_role = " ".join(parts[2:]).strip()
         elif len(parts) > 1:
             custom_role = " ".join(parts[1:]).strip()
-
         if not custom_role:
             db.set(collection, f"custom_roles.{user_id}", default_role)
             db.set(collection, f"chat_history.{user_id}", None)
@@ -420,7 +421,6 @@ async def set_custom_role(client: Client, message: Message):
             db.set(collection, f"custom_roles.{user_id}", custom_role)
             db.set(collection, f"chat_history.{user_id}", None)
             await message.edit_text(f"Role set [{user_id}]!\n<b>New Role:</b> {custom_role}")
-
         await message.delete()
 
     except Exception as e:
@@ -433,16 +433,13 @@ async def set_default_role(client: Client, message: Message):
         if len(parts) < 2:
             await message.edit_text("<b>Usage:</b> setdefaultrole <role_name>")
             return
-
         role_name = parts[1].lower()
         roles = await fetch_roles()
-
         if role_name in roles:
             db.set(collection, "default_role", role_name)
             await message.edit_text(f"<b>Default role updated to:</b> {role_name}")
         else:
             await message.edit_text(f"<b>Error:</b> Role '{role_name}' not found in roles.json")
-
     except Exception as e:
         await client.send_message("me", f"An error occurred in the `setdefaultrole` command:\n\n{str(e)}")
         
@@ -451,10 +448,8 @@ async def set_gemini_key(client: Client, message: Message):
     try:
         command = message.text.strip().split()
         subcommand, key = command[1] if len(command) > 1 else None, command[2] if len(command) > 2 else None
-
         gemini_keys = db.get(collection, "gemini_keys") or []
         current_key_index = db.get(collection, "current_key_index") or 0
-
         if subcommand == "add" and key:
             gemini_keys.append(key)
             db.set(collection, "gemini_keys", gemini_keys)
@@ -485,7 +480,6 @@ async def set_gemini_key(client: Client, message: Message):
             keys_list = "\n".join([f"{i + 1}. {key}" for i, key in enumerate(gemini_keys)])
             current_key = gemini_keys[current_key_index] if gemini_keys else "None"
             await message.edit_text(f"<b>Gemini API keys:</b>\n\n<code>{keys_list}</code>\n\n<b>Current key:</b> <code>{current_key}</code>")
-
         await asyncio.sleep(1)
     except Exception as e:
         await client.send_message("me", f"An error occurred in the `setgkey` command:\n\n{str(e)}")
@@ -495,6 +489,7 @@ modules_help["gchat"] = {
     "gchat off [user_id]": "Disable gchat for the user.",
     "gchat del [user_id]": "Delete chat history for the user.",
     "gchat all": "Toggle gchat for all users.",
+    "gchat r [user_id]": "Remove user from on/off list so user will follow global gchat (all) setting.",
     "role [user_id] <custom role>": "Set a custom role for the user.",
     "switch": "Switch gchat modes.",
     "default": "Set a default role for all users.",
