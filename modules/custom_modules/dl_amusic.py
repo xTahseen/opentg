@@ -7,7 +7,7 @@ from pyrogram.types import Message
 from utils.misc import modules_help, prefix
 from utils.scripts import progress
 
-@Client.on_message(filters.command(["amusic", "applemusic"], prefix))
+@Client.on_message(filters.command(["amusic", "applemusic", "am"], prefix))
 async def apple_music(client: Client, message: Message):
     chat_id = message.chat.id
     is_self = message.from_user and message.from_user.is_self
