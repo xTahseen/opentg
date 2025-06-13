@@ -45,7 +45,7 @@ async def spotify_download(client: Client, message: Message):
 
     try:
         download_result = requests.get(
-            f"https://delirius-apiofc.vercel.app/download/spotifydlv3?url={song_details['url']}"
+            f"https://delirius-apiofc.vercel.app/download/spotifydlv2?url={song_details['url']}"
         ).json()
         if not download_result.get("status"):
             raise ValueError("Failed to fetch download link")
