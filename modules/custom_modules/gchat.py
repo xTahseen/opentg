@@ -13,6 +13,7 @@ from PIL import Image
 import datetime
 import pytz
 import requests
+from pyrogram.errors import FloodWait
 
 genai = import_library("google.generativeai", "google-generativeai")
 safety_settings = [{"category": cat, "threshold": "BLOCK_NONE"} for cat in [
@@ -47,7 +48,15 @@ async def reply_worker(client):
         reply_func, args, kwargs = await reply_queue.get()
         cleanup_file = kwargs.pop("cleanup_file", None)
         try:
-            await reply_func(*args, **kwargs)
+            try:
+                await reply_func(*args, **kwargs)
+            except FloodWait as e:
+                try:
+                    await client.send_message("me", f"FloodWait: sleeping {e.value}s")
+                except Exception:
+                    pass
+                await asyncio.sleep(e.value + 1)
+                await reply_func(*args, **kwargs)
         except Exception as e:
             try:
                 await client.send_message("me", f"Reply queue error:\n{e}")
@@ -59,7 +68,7 @@ async def reply_worker(client):
                     os.remove(cleanup_file)
                 except Exception:
                     pass
-        await asyncio.sleep(1.1)
+        await asyncio.sleep(2.1)
 
 def ensure_reply_worker(client):
     global reply_worker_started
