@@ -45,48 +45,6 @@ async def set_chat(_, message: Message):
     except ValueError:
         await message.edit("<b>Invalid chat ID</b>")
 
-@Client.on_message(filters.command("topicinfo", prefix) & filters.me & filters.reply, group=2)
-async def topic_info(client: Client, message: Message):
-    replied = message.reply_to_message
-    if not replied:
-        return await message.edit("<b>Reply to a media message inside a topic.</b>")
-
-    topic_id = replied.message_thread_id
-    if not topic_id:
-        return await message.edit("<b>This message is not from a forum topic.</b>")
-
-    chat_id = replied.chat.id
-    group_data = get_group_data(chat_id)
-    user_topics = group_data.get("user_topics", {})
-
-    # Try to find which user owns this topic
-    user_id = None
-    for uid, tid in user_topics.items():
-        if tid == topic_id:
-            user_id = int(uid)
-            break
-
-    topic = await client.get_forum_topic(chat_id, topic_id)
-    text = f"<b>Topic Title:</b> {topic.title}\n<b>Topic ID:</b> <code>{topic_id}</code>"
-
-    if user_id:
-        try:
-            user = await client.get_users(user_id)
-            text += (
-                f"\n\n<b>Assigned User:</b>\n"
-                f"<b>Name:</b> {user.full_name}\n"
-                f"<b>User ID:</b> <code>{user.id}</code>\n"
-                f"<b>Username:</b> @{user.username or 'N/A'}\n"
-                f"<b>Phone No:</b> +{user.phone_number or 'N/A'}"
-            )
-        except Exception as e:
-            text += f"\n\n<b>Failed to fetch user info:</b> {e}"
-    else:
-        text += "\n\n<b>This topic is not linked to any user in the database.</b>"
-
-    await message.edit(text)
-
-
 @Client.on_message(filters.command(["mrename", "m"], prefix) & filters.me, group=2)
 async def rename_topic(client: Client, message: Message):
     try:
