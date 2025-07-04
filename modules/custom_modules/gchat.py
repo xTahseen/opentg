@@ -145,7 +145,7 @@ def build_prompt(bot_role, chat_history, user_message):
     timestamp = datetime.datetime.now(la_timezone).strftime("%Y-%m-%d %H:%M:%S")
     chat_context = "\n".join(chat_history)
     prompt = (
-        f"Time: {timestamp}\n"
+        f"Current Time: {timestamp}\n"
         f"Role: {bot_role}\n"
         f"Chat History:\n{chat_context}\n"
         f"User Message:\n{user_message}"
