@@ -252,7 +252,6 @@ async def gchat(client: Client, message: Message):
             await send_reply(client.send_message, ("me", "Err: 'default' role missing."), {}, client)
             return
         bot_role = db.get(collection, f"custom_roles.{user_id}") or default_role
-        chat_history = get_chat_history(user_id, user_message, user_name)
         if not hasattr(client, "message_buffer"):
             client.message_buffer = {}
             client.message_timers = {}
