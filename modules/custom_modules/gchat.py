@@ -95,6 +95,8 @@ def ensure_reply_worker(client):
 
 async def send_reply(reply_func, args, kwargs, client):
     ensure_reply_worker(client)
+    if isinstance(args, tuple):
+        args = list(args)
     await reply_queue.put((reply_func, args, kwargs))
 
 def get_voice_generation_enabled():
@@ -125,15 +127,15 @@ async def handle_gpic_message(client, chat_id, bot_response):
             caption = parts[2]
         photos = await fetch_bot_pics(client)
         if not photos:
-            await send_reply(client.send_message, (chat_id, "No bot pictures in group/channel."), {}, client)
+            await send_reply(client.send_message, ["No bot pictures in group/channel."], {}, client)
             return True
         selected = random.sample(photos, min(n, len(photos)))
         if len(selected) > 1:
             from pyrogram.types import InputMediaPhoto
             media = [InputMediaPhoto(pic, caption=caption if i == 0 else "") for i, pic in enumerate(selected)]
-            await send_reply(client.send_media_group, (chat_id, media), {}, client)
+            await send_reply(client.send_media_group, [chat_id, media], {}, client)
         else:
-            await send_reply(client.send_photo, (chat_id, selected[0]), {"caption": caption}, client)
+            await send_reply(client.send_photo, [chat_id, selected[0]], {"caption": caption}, client)
         return True
     return False
 
@@ -210,19 +212,19 @@ async def handle_voice_message(client, chat_id, bot_response):
     if not voice_generation_enabled:
         if bot_response.startswith(".el"):
             bot_response = bot_response[3:].strip()
-        await send_reply(client.send_message, (chat_id, bot_response), {}, client)
+        await send_reply(client.send_message, [chat_id, bot_response], {}, client)
         return True
     if bot_response.startswith(".el"):
         try:
             audio_path = await generate_elevenlabs_audio(text=bot_response[3:])
             if audio_path and os.path.exists(audio_path):
-                await send_reply(client.send_voice, (chat_id,), {"voice": audio_path, "cleanup_file": audio_path}, client)
+                await send_reply(client.send_voice, [chat_id], {"voice": audio_path, "cleanup_file": audio_path}, client)
                 return True
             else:
-                await send_reply(client.send_message, (chat_id, bot_response[3:].strip()), {}, client)
+                await send_reply(client.send_message, [chat_id, bot_response[3:].strip()], {}, client)
                 return True
         except Exception:
-            await send_reply(client.send_message, (chat_id, bot_response[3:].strip()), {}, client)
+            await send_reply(client.send_message, [chat_id, bot_response[3:].strip()], {}, client)
             return True
     return False
 
@@ -239,9 +241,9 @@ async def process_sticker_gif_buffer(client, user_id):
         last_msg = msgs[-1]
         random_smiley = random.choice(smileys)
         await asyncio.sleep(random.uniform(5, 10))
-        await send_reply(last_msg.reply_text, (random_smiley,), {}, client)
+        await send_reply(last_msg.reply_text, [random_smiley], {}, client)
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"Sticker/GIF buffer error:\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"Sticker/GIF buffer error:\n{str(e)}"], {}, client)
 
 @Client.on_message(
     (filters.sticker | filters.animation) & filters.private & ~filters.me & ~filters.bot, group=1
@@ -266,7 +268,7 @@ async def gchat(client: Client, message: Message):
         roles = await fetch_roles()
         default_role = roles.get("default")
         if not default_role:
-            await send_reply(client.send_message, ("me", "Err: 'default' role missing."), {}, client)
+            await send_reply(client.send_message, ["me", "Err: 'default' role missing."], {}, client)
             return
         bot_role = db.get(settings_collection, f"custom_roles.{user_id}") or default_role
         if not hasattr(client, "message_buffer"):
@@ -306,7 +308,7 @@ async def gchat(client: Client, message: Message):
                     db.set(history_collection, f"chat_history.{user_id}", chat_history)
                     if await handle_voice_message(client, message.chat.id, bot_response):
                         return
-                    await send_reply(message.reply_text, (bot_response,), {}, client)
+                    await send_reply(message.reply_text, [bot_response], {}, client)
                     return
                 except Exception as e:
                     if "429" in str(e) or "invalid" in str(e).lower():
@@ -316,11 +318,11 @@ async def gchat(client: Client, message: Message):
                             db.set(settings_collection, "current_key_index", current_key_index)
                         await asyncio.sleep(4)
                     else:
-                        await send_reply(client.send_message, ("me", f"gchat error:\n\n{str(e)}"), {}, client)
+                        await send_reply(client.send_message, ["me", f"gchat error:\n\n{str(e)}"], {}, client)
                         return
         client.message_timers[user_id] = asyncio.create_task(process_combined_messages())
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"gchat module error:\n\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"gchat module error:\n\n{str(e)}"], {}, client)
 
 @Client.on_message(filters.private & ~filters.me & ~filters.bot, group=1)
 async def handle_files(client: Client, message: Message):
@@ -333,7 +335,7 @@ async def handle_files(client: Client, message: Message):
         roles = await fetch_roles()
         default_role = roles.get("default")
         if not default_role:
-            await send_reply(client.send_message, ("me", "Err: 'default' role missing."), {}, client)
+            await send_reply(client.send_message, ["me", "Err: 'default' role missing."], {}, client)
             return
         bot_role = db.get(settings_collection, f"custom_roles.{user_id}") or default_role
         caption = message.caption.strip() if message.caption else ""
@@ -360,7 +362,7 @@ async def handle_files(client: Client, message: Message):
                         return
                     if await handle_voice_message(client, message.chat.id, response):
                         return
-                    await send_reply(message.reply, (response,), {"reply_to_message_id": message.id}, client)
+                    await send_reply(message.reply, [response], {"reply_to_message_id": message.id}, client)
                 client.image_timers[user_id] = asyncio.create_task(process_images())
             return
         file_type = None
@@ -382,9 +384,9 @@ async def handle_files(client: Client, message: Message):
                 return
             if await handle_voice_message(client, message.chat.id, response):
                 return
-            await send_reply(message.reply, (response,), {"reply_to_message_id": message.id}, client)
+            await send_reply(message.reply, [response], {"reply_to_message_id": message.id}, client)
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"handle_files error:\n\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"handle_files error:\n\n{str(e)}"], {}, client)
     finally:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
@@ -401,23 +403,23 @@ async def set_gemini_key(client: Client, message: Message):
         if subcommand == "model":
             if key:
                 set_gemini_model(key)
-                await send_reply(message.edit_text, (f"Gemini model set to: {key}",), {}, client)
+                await send_reply(message.edit_text, [f"Gemini model set to: {key}"], {}, client)
             else:
                 current_model = get_gemini_model()
-                await send_reply(message.edit_text, (f"Current Gemini model: {current_model}",), {}, client)
+                await send_reply(message.edit_text, [f"Current Gemini model: {current_model}"], {}, client)
             return
 
         if subcommand == "voice":
             enabled = not get_voice_generation_enabled()
             set_voice_generation_enabled(enabled)
             stat = "ON" if enabled else "OFF"
-            await send_reply(message.edit_text, (f"Voice reply toggled: {stat}",), {}, client)
+            await send_reply(message.edit_text, [f"Voice reply toggled: {stat}"], {}, client)
             return
 
         if subcommand == "add" and key:
             gemini_keys.append(key)
             db.set(settings_collection, "gemini_keys", gemini_keys)
-            await send_reply(message.edit_text, ("Gemini key added!",), {}, client)
+            await send_reply(message.edit_text, ["Gemini key added!"], {}, client)
             return
         elif subcommand == "set" and key:
             index = int(key) - 1
@@ -427,9 +429,9 @@ async def set_gemini_key(client: Client, message: Message):
                 genai.configure(api_key=gemini_keys[current_key_index])
                 model = genai.GenerativeModel(get_gemini_model())
                 model.safety_settings = safety_settings
-                await send_reply(message.edit_text, (f"Current key set to: {key}",), {}, client)
+                await send_reply(message.edit_text, [f"Current key set to: {key}"], {}, client)
             else:
-                await send_reply(message.edit_text, (f"Invalid key index: {key}",), {}, client)
+                await send_reply(message.edit_text, [f"Invalid key index: {key}"], {}, client)
             return
         elif subcommand == "del" and key:
             index = int(key) - 1
@@ -439,31 +441,51 @@ async def set_gemini_key(client: Client, message: Message):
                 if current_key_index >= len(gemini_keys):
                     current_key_index = max(0, len(gemini_keys) - 1)
                     db.set(settings_collection, "current_key_index", current_key_index)
-                await send_reply(message.edit_text, (f"Key {key} deleted!",), {}, client)
+                await send_reply(message.edit_text, [f"Key {key} deleted!"], {}, client)
             else:
-                await send_reply(message.edit_text, (f"Invalid key index: {key}",), {}, client)
+                await send_reply(message.edit_text, [f"Invalid key index: {key}"], {}, client)
+            return
+
+        if subcommand == "default":
+            roles = await fetch_roles()
+            if key:
+                role_name = key.lower()
+                if role_name in roles:
+                    db.set(settings_collection, "default_role", role_name)
+                    await send_reply(message.edit_text, [f"Default: {role_name}"], {}, client)
+                else:
+                    await send_reply(message.edit_text, [f"Not found: {role_name}"], {}, client)
+            else:
+                roles_list = "\n".join([f"- {role}" for role in roles.keys()]) if roles else "No roles found."
+                await send_reply(
+                    message.edit_text,
+                    [f"Available roles:\n{roles_list}"],
+                    {},
+                    client
+                )
             return
 
         keys_list = "\n".join([f"{i + 1}. {key}" for i, key in enumerate(gemini_keys)])
         current_key = gemini_keys[current_key_index] if gemini_keys else "None"
         current_model = get_gemini_model()
         voice_status = "ON" if get_voice_generation_enabled() else "OFF"
+        current_default = db.get(settings_collection, "default_role") or "default"
         await send_reply(
             message.edit_text,
-            (f"Keys:\n{keys_list}\nCurrent: {current_key}\nModel: {current_model}\nVoice: {voice_status}",),
+            [f"Keys:\n{keys_list}\nCurrent: {current_key}\nModel: {current_model}\nVoice: {voice_status}\nDefault: {current_default}"],
             {},
             client
         )
         await asyncio.sleep(1)
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"setgchat error:\n\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"setgchat error:\n\n{str(e)}"], {}, client)
 
 @Client.on_message(filters.command(["gchat", "gc"], prefix) & filters.me)
 async def gchat_command(client: Client, message: Message):
     try:
         parts = message.text.strip().split()
         if len(parts) < 2:
-            await send_reply(message.edit_text, ("Usage: gchat [on|off|del|all|r] [user_id]",), {}, client)
+            await send_reply(message.edit_text, ["Usage: gchat [on|off|del|all|r] [user_id]"], {}, client)
             return
         command = parts[1].lower()
         user_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else message.chat.id
@@ -474,7 +496,7 @@ async def gchat_command(client: Client, message: Message):
             if user_id not in enabled_users:
                 enabled_users.append(user_id)
                 db.set(settings_collection, "enabled_users", enabled_users)
-            await send_reply(message.edit_text, (f"<spoiler>ON: {user_id}</spoiler>",), {}, client)
+            await send_reply(message.edit_text, [f"<spoiler>ON: {user_id}</spoiler>"], {}, client)
         elif command == "off":
             if user_id not in disabled_users:
                 disabled_users.append(user_id)
@@ -482,15 +504,15 @@ async def gchat_command(client: Client, message: Message):
             if user_id in enabled_users:
                 enabled_users.remove(user_id)
                 db.set(settings_collection, "enabled_users", enabled_users)
-            await send_reply(message.edit_text, (f"<spoiler>OFF: {user_id}</spoiler>",), {}, client)
+            await send_reply(message.edit_text, [f"<spoiler>OFF: {user_id}</spoiler>"], {}, client)
         elif command == "del":
             db.remove(history_collection, f"chat_history.{user_id}")
-            await send_reply(message.edit_text, (f"<spoiler>Deleted: {user_id}</spoiler>",), {}, client)
+            await send_reply(message.edit_text, [f"<spoiler>Deleted: {user_id}</spoiler>"], {}, client)
         elif command == "all":
             global gchat_for_all
             gchat_for_all = not gchat_for_all
             db.set(settings_collection, "gchat_for_all", gchat_for_all)
-            await send_reply(message.edit_text, (f"All: {'enabled' if gchat_for_all else 'disabled'}",), {}, client)
+            await send_reply(message.edit_text, [f"All: {'enabled' if gchat_for_all else 'disabled'}"], {}, client)
         elif command == "r":
             changed = False
             if user_id in enabled_users:
@@ -503,37 +525,37 @@ async def gchat_command(client: Client, message: Message):
                 changed = True
             await send_reply(
                 message.edit_text,
-                (f"<spoiler>Removed: {user_id}</spoiler>" if changed else f"<spoiler>Not found: {user_id}</spoiler>",),
+                [f"<spoiler>Removed: {user_id}</spoiler>" if changed else f"<spoiler>Not found: {user_id}</spoiler>"],
                 {}, client)
         else:
-            await send_reply(message.edit_text, ("Usage: gchat [on|off|del|all|r] [user_id]",), {}, client)
-        await send_reply(message.delete, (), {}, client)
+            await send_reply(message.edit_text, ["Usage: gchat [on|off|del|all|r] [user_id]"], {}, client)
+        await send_reply(message.delete, [], {}, client)
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"gchat command error:\n\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"gchat command error:\n\n{str(e)}"], {}, client)
 
 @Client.on_message(filters.command("gswitch", prefix) & filters.me)
 async def switch_role(client: Client, message: Message):
     try:
         roles = await fetch_roles()
         if not roles:
-            await send_reply(client.send_message, ("me", "Role fetch error."), {}, client)
-            await send_reply(message.edit_text, ("Failed to fetch roles.",), {}, client)
+            await send_reply(client.send_message, ["me", "Role fetch error."], {}, client)
+            await send_reply(message.edit_text, ["Failed to fetch roles."], {}, client)
             return
         user_id = message.chat.id
         parts = message.text.strip().split()
         if len(parts) == 1:
             available_roles = "\n".join([f"- {role}" for role in roles.keys()])
-            await send_reply(message.edit_text, (f"Roles:\n{available_roles}",), {}, client)
+            await send_reply(message.edit_text, [f"Roles:\n{available_roles}"], {}, client)
             return
         role_name = parts[1].lower()
         if role_name in roles:
             db.set(settings_collection, f"custom_roles.{user_id}", roles[role_name])
-            await send_reply(message.edit_text, (f"Switched: {role_name}",), {}, client)
+            await send_reply(message.edit_text, [f"Switched: {role_name}"], {}, client)
         else:
-            await send_reply(message.edit_text, (f"Not found: {role_name}",), {}, client)
-        await send_reply(message.delete, (), {}, client)
+            await send_reply(message.edit_text, [f"Not found: {role_name}"], {}, client)
+        await send_reply(message.delete, [], {}, client)
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"switch command error:\n\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"switch command error:\n\n{str(e)}"], {}, client)
 
 @Client.on_message(filters.command("role", prefix) & filters.me)
 async def set_custom_role(client: Client, message: Message):
@@ -541,7 +563,7 @@ async def set_custom_role(client: Client, message: Message):
         roles = await fetch_roles()
         default_role = roles.get("default")
         if not default_role:
-            await send_reply(client.send_message, ("me", "Err: 'default' role missing."), {}, client)
+            await send_reply(client.send_message, ["me", "Err: 'default' role missing."], {}, client)
             return
         parts = message.text.strip().split()
         user_id = message.chat.id
@@ -556,31 +578,14 @@ async def set_custom_role(client: Client, message: Message):
         if not custom_role:
             db.remove(settings_collection, f"custom_roles.{user_id}")
             db.remove(history_collection, f"chat_history.{user_id}")
-            await send_reply(message.edit_text, (f"<spoiler>Role reset: {user_id}</spoiler>",), {}, client)
+            await send_reply(message.edit_text, [f"<spoiler>Role reset: {user_id}</spoiler>"], {}, client)
         else:
             db.set(settings_collection, f"custom_roles.{user_id}", custom_role)
             db.remove(history_collection, f"chat_history.{user_id}")
-            await send_reply(message.edit_text, (f"<spoiler>Role set: {user_id}</spoiler>\n{custom_role}",), {}, client)
-        await send_reply(message.delete, (), {}, client)
+            await send_reply(message.edit_text, [f"<spoiler>Role set: {user_id}</spoiler>\n{custom_role}"], {}, client)
+        await send_reply(message.delete, [], {}, client)
     except Exception as e:
-        await send_reply(client.send_message, ("me", f"role command error:\n\n{str(e)}"), {}, client)
-
-@Client.on_message(filters.command("default", prefix) & filters.me)
-async def set_default_role(client: Client, message: Message):
-    try:
-        parts = message.text.strip().split()
-        if len(parts) < 2:
-            await send_reply(message.edit_text, ("Usage: default <role_name>",), {}, client)
-            return
-        role_name = parts[1].lower()
-        roles = await fetch_roles()
-        if role_name in roles:
-            db.set(settings_collection, "default_role", role_name)
-            await send_reply(message.edit_text, (f"Default: {role_name}",), {}, client)
-        else:
-            await send_reply(message.edit_text, (f"Not found: {role_name}",), {}, client)
-    except Exception as e:
-        await send_reply(client.send_message, ("me", f"default command error:\n\n{str(e)}"), {}, client)
+        await send_reply(client.send_message, ["me", f"role command error:\n\n{str(e)}"], {}, client)
 
 modules_help["gchat"] = {
     "gchat on [user_id]": "Enable gchat for user.",
@@ -590,13 +595,14 @@ modules_help["gchat"] = {
     "gchat r [user_id]": "Remove user from lists.",
     "role [user_id] <role>": "Set custom role.",
     "switch": "Switch gchat modes.",
-    "default": "Set default role.",
     "setgchat add <key>": "Add Gemini API key.",
     "setgchat set <index>": "Set Gemini API key.",
     "setgchat del <index>": "Delete Gemini API key.",
-    "setgchat": "Show Gemini API keys, model, and voice reply status.",
+    "setgchat": "Show Gemini API keys, model, voice reply status, and default role.",
     "setgchat model <model_name>": "Set Gemini model.",
     "setgchat model": "Show Gemini model.",
-    "setgchat gvoice": "Toggle voice reply.",
+    "setgchat voice": "Toggle voice reply.",
+    "setgchat default <role_name>": "Set default role.",
+    "setgchat default": "Show all available roles.",
     "gpic [n] [caption]": "Send n pics with caption."
 }
