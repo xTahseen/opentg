@@ -28,7 +28,23 @@ generation_config = {
     "max_output_tokens": 40,
 }
 
-model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+_gemini_model_cache = None
+
+def get_gemini_model():
+    global _gemini_model_cache
+    if _gemini_model_cache is not None:
+        return _gemini_model_cache
+    model = db.get("custom.gsettings", "gemini_model") or DEFAULT_GEMINI_MODEL
+    _gemini_model_cache = model
+    return model
+
+def set_gemini_model(model_name: str):
+    global _gemini_model_cache
+    db.set("custom.gsettings", "gemini_model", model_name)
+    _gemini_model_cache = model_name
+
+model = genai.GenerativeModel(get_gemini_model(), generation_config=generation_config)
 model.safety_settings = safety_settings
 
 history_collection = "custom.gchat"
@@ -160,7 +176,7 @@ async def generate_gemini_response(input_data, chat_history, user_id):
         try:
             current_key = gemini_keys[current_key_index]
             genai.configure(api_key=current_key)
-            model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
+            model = genai.GenerativeModel(get_gemini_model(), generation_config=generation_config)
             model.safety_settings = safety_settings
             response = model.generate_content(input_data)
             bot_response = response.text.strip()
@@ -279,7 +295,7 @@ async def gchat(client: Client, message: Message):
                 try:
                     current_key = gemini_keys[current_key_index]
                     genai.configure(api_key=current_key)
-                    model = genai.GenerativeModel("gemini-2.0-flash", generation_config=generation_config)
+                    model = genai.GenerativeModel(get_gemini_model(), generation_config=generation_config)
                     model.safety_settings = safety_settings
                     prompt = build_prompt(bot_role, chat_history, combined_message)
                     response = model.start_chat().send_message(prompt)
@@ -372,6 +388,75 @@ async def handle_files(client: Client, message: Message):
     finally:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
+
+@Client.on_message(filters.command(["setgchat", "setgc"], prefix) & filters.me)
+async def set_gemini_key(client: Client, message: Message):
+    try:
+        command = message.text.strip().split()
+        subcommand = command[1] if len(command) > 1 else None
+        key = command[2] if len(command) > 2 else None
+        gemini_keys = db.get(settings_collection, "gemini_keys") or []
+        current_key_index = db.get(settings_collection, "current_key_index") or 0
+
+        if subcommand == "model":
+            if key:
+                set_gemini_model(key)
+                await send_reply(message.edit_text, (f"Gemini model set to: {key}",), {}, client)
+            else:
+                current_model = get_gemini_model()
+                await send_reply(message.edit_text, (f"Current Gemini model: {current_model}",), {}, client)
+            return
+
+        if subcommand == "voice":
+            enabled = not get_voice_generation_enabled()
+            set_voice_generation_enabled(enabled)
+            stat = "ON" if enabled else "OFF"
+            await send_reply(message.edit_text, (f"Voice reply toggled: {stat}",), {}, client)
+            return
+
+        if subcommand == "add" and key:
+            gemini_keys.append(key)
+            db.set(settings_collection, "gemini_keys", gemini_keys)
+            await send_reply(message.edit_text, ("Gemini key added!",), {}, client)
+            return
+        elif subcommand == "set" and key:
+            index = int(key) - 1
+            if 0 <= index < len(gemini_keys):
+                current_key_index = index
+                db.set(settings_collection, "current_key_index", current_key_index)
+                genai.configure(api_key=gemini_keys[current_key_index])
+                model = genai.GenerativeModel(get_gemini_model())
+                model.safety_settings = safety_settings
+                await send_reply(message.edit_text, (f"Current key set to: {key}",), {}, client)
+            else:
+                await send_reply(message.edit_text, (f"Invalid key index: {key}",), {}, client)
+            return
+        elif subcommand == "del" and key:
+            index = int(key) - 1
+            if 0 <= index < len(gemini_keys):
+                del gemini_keys[index]
+                db.set(settings_collection, "gemini_keys", gemini_keys)
+                if current_key_index >= len(gemini_keys):
+                    current_key_index = max(0, len(gemini_keys) - 1)
+                    db.set(settings_collection, "current_key_index", current_key_index)
+                await send_reply(message.edit_text, (f"Key {key} deleted!",), {}, client)
+            else:
+                await send_reply(message.edit_text, (f"Invalid key index: {key}",), {}, client)
+            return
+
+        keys_list = "\n".join([f"{i + 1}. {key}" for i, key in enumerate(gemini_keys)])
+        current_key = gemini_keys[current_key_index] if gemini_keys else "None"
+        current_model = get_gemini_model()
+        voice_status = "ON" if get_voice_generation_enabled() else "OFF"
+        await send_reply(
+            message.edit_text,
+            (f"Keys:\n{keys_list}\nCurrent: {current_key}\nModel: {current_model}\nVoice: {voice_status}",),
+            {},
+            client
+        )
+        await asyncio.sleep(1)
+    except Exception as e:
+        await send_reply(client.send_message, ("me", f"setgchat error:\n\n{str(e)}"), {}, client)
 
 @Client.on_message(filters.command(["gchat", "gc"], prefix) & filters.me)
 async def gchat_command(client: Client, message: Message):
@@ -497,59 +582,6 @@ async def set_default_role(client: Client, message: Message):
     except Exception as e:
         await send_reply(client.send_message, ("me", f"default command error:\n\n{str(e)}"), {}, client)
 
-@Client.on_message(filters.command("setgkey", prefix) & filters.me)
-async def set_gemini_key(client: Client, message: Message):
-    try:
-        command = message.text.strip().split()
-        subcommand = command[1] if len(command) > 1 else None
-        key = command[2] if len(command) > 2 else None
-        gemini_keys = db.get(settings_collection, "gemini_keys") or []
-        current_key_index = db.get(settings_collection, "current_key_index") or 0
-        if subcommand == "add" and key:
-            gemini_keys.append(key)
-            db.set(settings_collection, "gemini_keys", gemini_keys)
-            await send_reply(message.edit_text, ("Gemini key added!",), {}, client)
-        elif subcommand == "set" and key:
-            index = int(key) - 1
-            if 0 <= index < len(gemini_keys):
-                current_key_index = index
-                db.set(settings_collection, "current_key_index", current_key_index)
-                genai.configure(api_key=gemini_keys[current_key_index])
-                model = genai.GenerativeModel("gemini-2.0-flash")
-                model.safety_settings = safety_settings
-                await send_reply(message.edit_text, (f"Current key: {key}",), {}, client)
-            else:
-                await send_reply(message.edit_text, (f"Invalid: {key}",), {}, client)
-        elif subcommand == "del" and key:
-            index = int(key) - 1
-            if 0 <= index < len(gemini_keys):
-                del gemini_keys[index]
-                db.set(settings_collection, "gemini_keys", gemini_keys)
-                if current_key_index >= len(gemini_keys):
-                    current_key_index = max(0, len(gemini_keys) - 1)
-                    db.set(settings_collection, "current_key_index", current_key_index)
-                await send_reply(message.edit_text, (f"Key {key} deleted!",), {}, client)
-            else:
-                await send_reply(message.edit_text, (f"Invalid: {key}",), {}, client)
-        else:
-            keys_list = "\n".join([f"{i + 1}. {key}" for i, key in enumerate(gemini_keys)])
-            current_key = gemini_keys[current_key_index] if gemini_keys else "None"
-            await send_reply(message.edit_text, (f"Keys:\n{keys_list}\nCurrent: {current_key}",), {}, client)
-        await asyncio.sleep(1)
-    except Exception as e:
-        await send_reply(client.send_message, ("me", f"setgkey error:\n\n{str(e)}"), {}, client)
-
-@Client.on_message(filters.command("gvoice", prefix) & filters.me)
-async def gvoice_toggle(client: Client, message: Message):
-    try:
-        enabled = not get_voice_generation_enabled()
-        set_voice_generation_enabled(enabled)
-        status = "ON" if enabled else "OFF"
-        await send_reply(message.edit_text, (f"Voice: {status}",), {}, client)
-        await send_reply(message.delete, (), {}, client)
-    except Exception as e:
-        await send_reply(client.send_message, ("me", f"gvoice error:\n\n{str(e)}"), {}, client)
-
 modules_help["gchat"] = {
     "gchat on [user_id]": "Enable gchat for user.",
     "gchat off [user_id]": "Disable gchat for user.",
@@ -559,10 +591,12 @@ modules_help["gchat"] = {
     "role [user_id] <role>": "Set custom role.",
     "switch": "Switch gchat modes.",
     "default": "Set default role.",
-    "setgkey add <key>": "Add Gemini API key.",
-    "setgkey set <index>": "Set Gemini API key.",
-    "setgkey del <index>": "Delete Gemini API key.",
-    "setgkey": "Show Gemini API keys.",
-    "gvoice": "Toggle voice reply.",
+    "setgchat add <key>": "Add Gemini API key.",
+    "setgchat set <index>": "Set Gemini API key.",
+    "setgchat del <index>": "Delete Gemini API key.",
+    "setgchat": "Show Gemini API keys, model, and voice reply status.",
+    "setgchat model <model_name>": "Set Gemini model.",
+    "setgchat model": "Show Gemini model.",
+    "setgchat gvoice": "Toggle voice reply.",
     "gpic [n] [caption]": "Send n pics with caption."
 }
