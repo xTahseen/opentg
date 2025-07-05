@@ -588,21 +588,13 @@ async def set_custom_role(client: Client, message: Message):
         await send_reply(client.send_message, ["me", f"role command error:\n\n{str(e)}"], {}, client)
 
 modules_help["gchat"] = {
-    "gchat on [user_id]": "Enable gchat for user.",
-    "gchat off [user_id]": "Disable gchat for user.",
-    "gchat del [user_id]": "Delete chat for user.",
-    "gchat all": "Toggle gchat for all.",
-    "gchat r [user_id]": "Remove user from lists.",
-    "role [user_id] <role>": "Set custom role.",
-    "switch": "Switch gchat modes.",
-    "setgchat add <key>": "Add Gemini API key.",
-    "setgchat set <index>": "Set Gemini API key.",
-    "setgchat del <index>": "Delete Gemini API key.",
-    "setgchat": "Show Gemini API keys, model, voice reply status, and default role.",
-    "setgchat model <model_name>": "Set Gemini model.",
-    "setgchat model": "Show Gemini model.",
+    "gchat on/off/del/all/r [user_id]": "Manage gchat for users.",
+    "role [user_id] <role>": "Set or reset user role.",
+    "switch": "Show or set gchat modes.",
+    "setgchat add/set/del <key|index>": "Manage Gemini API keys.",
+    "setgchat": "Show Gemini config & status.",
+    "setgchat model <name>": "Set/show Gemini model.",
     "setgchat voice": "Toggle voice reply.",
-    "setgchat default <role_name>": "Set default role.",
-    "setgchat default": "Show all available roles.",
+    "setgchat default <role>": "Set/show default role.",
     "gpic [n] [caption]": "Send n pics with caption."
 }
