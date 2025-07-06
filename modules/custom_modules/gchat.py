@@ -31,6 +31,35 @@ generation_config = {
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 _gemini_model_cache = None
 
+DEFAULT_HISTORY_HEAD = 50
+DEFAULT_HISTORY_TAIL = 50
+
+def get_history_limits():
+    head = db.get("custom.gsettings", "history_head")
+    tail = db.get("custom.gsettings", "history_tail")
+    if not isinstance(head, int):
+        try:
+            head = int(head)
+        except:
+            head = DEFAULT_HISTORY_HEAD
+    if not isinstance(tail, int):
+        try:
+            tail = int(tail)
+        except:
+            tail = DEFAULT_HISTORY_TAIL
+    return head, tail
+
+def get_chat_history(user_id, user_message, user_name):
+    max_head, max_tail = get_history_limits()
+    chat_history = db.get("custom.gchat", f"chat_history.{user_id}") or []
+    chat_history.append(f"{user_name}: {user_message}")
+    db.set("custom.gchat", f"chat_history.{user_id}", chat_history)
+    if len(chat_history) > max_head + max_tail:
+        chat_history_for_prompt = chat_history[:max_head] + ["..."] + chat_history[-max_tail:]
+    else:
+        chat_history_for_prompt = chat_history
+    return chat_history_for_prompt
+
 def get_gemini_model():
     global _gemini_model_cache
     if _gemini_model_cache is not None:
@@ -153,23 +182,21 @@ async def fetch_roles():
     except requests.exceptions.RequestException:
         return {}
 
-def get_chat_history(user_id, user_message, user_name):
-    chat_history = db.get(history_collection, f"chat_history.{user_id}") or []
-    chat_history.append(f"{user_name}: {user_message}")
-    db.set(history_collection, f"chat_history.{user_id}", chat_history)
-    return chat_history
-
 def build_prompt(bot_role, chat_history, user_message):
     timestamp = datetime.datetime.now(la_timezone).strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(bot_role, list):
+        role_text = "\n".join(bot_role)
+    else:
+        role_text = str(bot_role)
     chat_context = "\n".join(chat_history)
     prompt = (
         f"Current Time: {timestamp}\n"
-        f"Role: {bot_role}\n"
+        f"Role:\n{role_text}\n"
         f"Chat History:\n{chat_context}\n"
         f"User Message:\n{user_message}"
     )
     return prompt
-
+    
 async def generate_gemini_response(input_data, chat_history, user_id):
     retries = 3
     gemini_keys = db.get(settings_collection, "gemini_keys") or [gemini_key]
@@ -182,8 +209,9 @@ async def generate_gemini_response(input_data, chat_history, user_id):
             model.safety_settings = safety_settings
             response = model.generate_content(input_data)
             bot_response = response.text.strip()
-            chat_history.append(bot_response)
-            db.set(history_collection, f"chat_history.{user_id}", chat_history)
+            full_history = db.get(history_collection, f"chat_history.{user_id}") or []
+            full_history.append(bot_response)
+            db.set(history_collection, f"chat_history.{user_id}", full_history)
             return bot_response
         except Exception as e:
             if "429" in str(e) or "invalid" in str(e).lower():
@@ -304,8 +332,9 @@ async def gchat(client: Client, message: Message):
                     bot_response = response.text.strip()
                     if await handle_gpic_message(client, message.chat.id, bot_response):
                         return
-                    chat_history.append(bot_response)
-                    db.set(history_collection, f"chat_history.{user_id}", chat_history)
+                    full_history = db.get(history_collection, f"chat_history.{user_id}") or []
+                    full_history.append(bot_response)
+                    db.set(history_collection, f"chat_history.{user_id}", full_history)
                     if await handle_voice_message(client, message.chat.id, bot_response):
                         return
                     await send_reply(message.reply_text, [bot_response], {}, client)
@@ -413,7 +442,7 @@ async def set_gemini_key(client: Client, message: Message):
             enabled = not get_voice_generation_enabled()
             set_voice_generation_enabled(enabled)
             stat = "ON" if enabled else "OFF"
-            await send_reply(message.edit_text, [f"Voice reply toggled: {stat}"], {}, client)
+            await send_reply(message.edit_text, [f"Voice: {stat}"], {}, client)
             return
 
         if subcommand == "add" and key:
@@ -446,7 +475,7 @@ async def set_gemini_key(client: Client, message: Message):
                 await send_reply(message.edit_text, [f"Invalid key index: {key}"], {}, client)
             return
 
-        if subcommand == "default":
+        if subcommand == "Role":
             roles = await fetch_roles()
             if key:
                 role_name = key.lower()
@@ -465,14 +494,35 @@ async def set_gemini_key(client: Client, message: Message):
                 )
             return
 
+        if subcommand == "history":
+            if key and key.isdigit():
+                n = int(key)
+                db.set(settings_collection, "history_head", n)
+                db.set(settings_collection, "history_tail", n)
+                await send_reply(message.edit_text, [f"History head/tail set to: {n}"], {}, client)
+                return
+            elif len(command) > 3 and command[2].isdigit() and command[3].isdigit():
+                head = int(command[2])
+                tail = int(command[3])
+                db.set(settings_collection, "history_head", head)
+                db.set(settings_collection, "history_tail", tail)
+                await send_reply(message.edit_text, [f"History head: {head}, tail: {tail}"], {}, client)
+                return
+
         keys_list = "\n".join([f"{i + 1}. {key}" for i, key in enumerate(gemini_keys)])
         current_key = gemini_keys[current_key_index] if gemini_keys else "None"
         current_model = get_gemini_model()
         voice_status = "ON" if get_voice_generation_enabled() else "OFF"
         current_default = db.get(settings_collection, "default_role") or "default"
+        head = db.get(settings_collection, "history_head") or DEFAULT_HISTORY_HEAD
+        tail = db.get(settings_collection, "history_tail") or DEFAULT_HISTORY_TAIL
         await send_reply(
             message.edit_text,
-            [f"Keys:\n{keys_list}\nCurrent: {current_key}\nModel: {current_model}\nVoice: {voice_status}\nDefault: {current_default}"],
+            [
+                f"Keys:\n{keys_list}\nCurrent: {current_key}\nModel: {current_model}\n"
+                f"Voice: {voice_status}\nRole: {current_default}\n"
+                f"History head: {head}, tail: {tail}"
+            ],
             {},
             client
         )
@@ -595,6 +645,7 @@ modules_help["gchat"] = {
     "setgchat": "Show Gemini config & status.",
     "setgchat model <name>": "Set/show Gemini model.",
     "setgchat voice": "Toggle voice reply.",
-    "setgchat default <role>": "Set/show default role.",
+    "setgchat role <role>": "Set/show global role.",
+    "setgchat history <n>": "Set/show chat history head/tail",
     "gpic [n] [caption]": "Send n pics with caption."
 }
