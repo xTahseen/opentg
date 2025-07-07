@@ -1,4 +1,5 @@
-pyrofork
+pyrofork==2.3.61
+ye dal
 tgcrypto
 wheel
 gunicorn
@@ -7,7 +8,7 @@ humanize
 pygments
 pymongo
 psutil
-Pillow>=10.3.0
+Pillow>=9.0.0
 click
 dnspython
 requests
