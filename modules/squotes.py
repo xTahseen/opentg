@@ -20,7 +20,7 @@ async def quote_cmd(client: Client, message: Message):
     else:
         message = await client.send_message(message.chat.id, "<b>Generating...</b>")
 
-    url = "https://quotes.fl1yd.su/generate"
+    url = "https://quotes-o042.onrender.com/generate"
     params = {
         "messages": [await render_message(client, msg)],
         "quote_color": "#162330",
@@ -64,7 +64,7 @@ async def fake_quote_cmd(client: Client, message: types.Message):
     else:
         message = await client.send_message(message.chat.id, "<b>Generating...</b>")
 
-    url = "https://quotes.fl1yd.su/generate"
+    url = "https://quotes-o042.onrender.com/generate"
     params = {
         "messages": [await render_message(client, q_message)],
         "quote_color": "#162330",
