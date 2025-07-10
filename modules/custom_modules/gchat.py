@@ -475,7 +475,7 @@ async def set_gemini_key(client: Client, message: Message):
                 await send_reply(message.edit_text, [f"Invalid key index: {key}"], {}, client)
             return
 
-        if subcommand == "Role":
+        if subcommand == "role":
             roles = await fetch_roles()
             if key:
                 role_name = key.lower()
