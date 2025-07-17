@@ -19,6 +19,7 @@ aiofiles
 pySmartDL
 lexica-api
 ffmpeg-python
+gemini-webapi
 google-generativeai
 pytgcalls==3.0.0.dev24
 pytz
