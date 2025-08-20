@@ -35,6 +35,45 @@ async def clean_up(*files):
         if os.path.exists(file):
             os.remove(file)
 
+@Client.on_message(filters.command("join", prefix))
+@init_client
+async def join_vc(client, message: Message):
+    global GROUP_CALL
+    reply_action = get_reply_action(message)
+
+    if len(message.command) > 1 and message.command[1].lstrip("-").isdigit():
+        target_chat = int(message.command[1])
+        if len(str(target_chat)) == 10:
+            target_chat = int(f"-100{target_chat}")
+    else:
+        target_chat = message.chat.id
+
+    status_msg = await reply_action(f"<b>Joining voice chat in <code>{target_chat}</code>...</b>")
+    try:
+        current_file = GROUP_CALL.input_filename if GROUP_CALL.is_connected else None
+
+        if GROUP_CALL.is_connected:
+            try:
+                await GROUP_CALL.stop()
+                await status_msg.edit("<b>Left previous voice chat...</b>")
+            except Exception:
+                pass
+
+        await GROUP_CALL.start(target_chat)
+
+        if current_file and os.path.exists(current_file):
+            GROUP_CALL.input_filename = current_file
+            await status_msg.edit(
+                f"<b>Moved to <code>{target_chat}</code> and continued playing music!</b>"
+            )
+        else:
+            await status_msg.edit(
+                f"<b>Joined voice chat in <code>{target_chat}</code> successfully!</b>"
+            )
+
+    except Exception as e:
+        await status_msg.edit(f"<b>Failed to join VC: <code>{e}</code></b>")
+
 @Client.on_message(filters.command("play", prefix))
 @with_reply
 @init_client
@@ -114,6 +153,7 @@ async def toggle_mute(_, message: Message):
     await get_reply_action(message)(f"<b>Sound {'muted' if is_mute else 'unmuted'}!</b>")
 
 modules_help["voice_chat"] = {
+    "join [chat_id]": "Join VC in current group or by chat_id",
     "play [reply]*": "Play audio in replied message",
     "volume [1–200]": "Set the volume level",
     "leave_vc": "Leave voice chat",
