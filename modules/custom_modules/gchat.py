@@ -637,6 +637,41 @@ async def set_custom_role(client: Client, message: Message):
     except Exception as e:
         await send_reply(client.send_message, ["me", f"role command error:\n\n{str(e)}"], {}, client)
 
+@Client.on_message(filters.command("test", prefix) & filters.me)
+async def test_keys(client: Client, message: Message):
+    try:
+        await message.edit_text("Testing...")
+
+        gemini_keys = db.get(settings_collection, "gemini_keys") or [gemini_key]
+        if not gemini_keys:
+            await message.edit_text("No Gemini keys configured.")
+            return
+
+        test_prompt = "ping"
+        result_lines = []
+
+        for idx, key in enumerate(gemini_keys):
+            try:
+                genai.configure(api_key=key)
+                test_model = genai.GenerativeModel(
+                    get_gemini_model(),
+                    generation_config=generation_config
+                )
+                test_model.safety_settings = safety_settings
+                response = test_model.generate_content(test_prompt)
+                text = getattr(response, "text", None) or getattr(response, "result", None)
+                status = "OK" if text else "No response"
+            except Exception as e:
+                status = f"Error: {e.__class__.__name__}: {str(e)[:60]}"
+
+            result_lines.append(f"{idx+1}. {key[:8]}...: {status}")
+
+        result_text = "Gemini API Key Test Results:\n" + "\n".join(result_lines)
+        await message.edit_text(result_text)
+
+    except Exception as e:
+        await client.send_message("me", f"test command error:\n\n{str(e)}")
+
 modules_help["gchat"] = {
     "gchat on/off/del/all/r [user_id]": "Manage gchat for users.",
     "role [user_id] <role>": "Set or reset user role.",
@@ -647,5 +682,6 @@ modules_help["gchat"] = {
     "setgchat voice": "Toggle voice reply.",
     "setgchat role <role>": "Set/show global role.",
     "setgchat history <n>": "Set/show chat history head/tail",
-    "gpic [n] [caption]": "Send n pics with caption."
+    "gpic [n] [caption]": "Send n pics with caption.",
+    "test": "Test Gemini keys"
 }
