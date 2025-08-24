@@ -9,8 +9,11 @@ def _chunked(seq, size):
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
 
-@Client.on_message(filters.me & filters.media)
-async def store_my_media(_, message: Message):
+@Client.on_message(filters.me & filters.media & ~filters.bot & ~filters.channel & ~filters.group)
+async def store_my_media(client: Client, message: Message):
+    if message.chat.id == (await client.get_me()).id:
+        return  
+
     enabled = db.get(NS, "enabled", False)
     if not enabled:
         return
