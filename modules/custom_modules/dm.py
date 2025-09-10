@@ -91,41 +91,33 @@ async def handle_dm(client: Client, message: Message):
 @Client.on_message(filters.me & filters.regex(rf"^{re.escape(prefix)}s\d+$"))
 async def media_slot(client: Client, message: Message):
     slot = message.text[len(prefix):]
+
     if message.reply_to_message:
         m = message.reply_to_message
-        media_map = {
-            "video": getattr(m.video, "file_id", None) if m.video else None,
-            "voice": getattr(m.voice, "file_id", None) if m.voice else None,
-            "video note": getattr(m.video_note, "file_id", None) if m.video_note else None,
-            "photo": getattr(m.photo, "file_id", None) if m.photo else None,
-        }
-        for media_type, file_id in media_map.items():
-            if file_id:
-                db.set(NS, slot, {"file_id": file_id, "type": media_type})
-                await message.edit(f"Saved {media_type} in <b>{slot}</b>")
-                return
+        db.set(NS, slot, {"chat_id": m.chat.id, "message_id": m.id})
+        await message.edit(f"Saved media in <b>{slot}</b>")
+        return
+
     saved = db.get(NS, slot, None)
     if not saved:
         await message.edit(f"Empty <b>{slot}</b>")
         return
-    file_id, media_type = (saved, "video") if isinstance(saved, str) else (saved.get("file_id"), saved.get("type"))
-    send_map = {
-        "video": client.send_video,
-        "voice": client.send_voice,
-        "video note": client.send_video_note,
-        "photo": client.send_photo,
-    }
-    if media_type in send_map:
-        try:
-            sent_msg = await send_map[media_type](
-                chat_id=message.chat.id,
-                **{media_type.replace(" ", "_"): file_id}
-            )
-        except Exception as e:
-            await message.edit("Send failed")
-            print(f"send failed for slot {slot}: {e}")
-            return
-        await _save_sent_message(client, sent_msg)
+
+    chat_id = saved.get("chat_id")
+    msg_id = saved.get("message_id")
+
+    try:
+        sent_msg = await client.copy_message(
+            chat_id=message.chat.id,
+            from_chat_id=chat_id,
+            message_id=msg_id
+        )
+    except Exception as e:
+        await message.edit("Send failed")
+        print(f"send failed for slot {slot}: {e}")
+        return
+
+    await _save_sent_message(client, sent_msg)
     await message.delete()
 
 
