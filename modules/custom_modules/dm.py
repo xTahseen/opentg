@@ -88,7 +88,7 @@ async def handle_dm(client: Client, message: Message):
     await message.edit(f"Deleted <b>{total_deleted}</b> in <b>{total_chats}</b> chats.")
 
 
-@Client.on_message(filters.me & filters.regex(rf"^{re.escape(prefix)}v\d+$"))
+@Client.on_message(filters.me & filters.regex(rf"^{re.escape(prefix)}s\d+$"))
 async def media_slot(client: Client, message: Message):
     slot = message.text[len(prefix):]
     if message.reply_to_message:
@@ -133,5 +133,5 @@ modules_help["dm"] = {
     "dm on": "Enable storing outgoing media.",
     "dm off": "Disable storing outgoing media.",
     "dm": "Delete all stored media globally.",
-    "v1, v2, ...": "Reply with media to save, or reuse slot.",
+    "s1, s2, ...": "Reply with media to save, or reuse slot.",
 }
