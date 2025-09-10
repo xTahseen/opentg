@@ -1,3 +1,4 @@
+import os
 import re
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -88,35 +89,59 @@ async def handle_dm(client: Client, message: Message):
     await message.edit(f"Deleted <b>{total_deleted}</b> in <b>{total_chats}</b> chats.")
 
 
-@Client.on_message(filters.me & filters.regex(rf"^{re.escape(prefix)}s\d+$"))
+@Client.on_message(filters.me & filters.regex(rf"^{re.escape(prefix)}s\d+(\s+v\d*)?$"))
 async def media_slot(client: Client, message: Message):
-    slot = message.text[len(prefix):]
-
+    parts = message.text.strip().split()
+    slot = parts[0][len(prefix):]
+    self_destruct = False
+    ttl_seconds = 10
+    if len(parts) > 1 and parts[1].startswith("v"):
+        self_destruct = True
+        if len(parts[1]) > 1 and parts[1][1:].isdigit():
+            ttl_seconds = int(parts[1][1:])
     if message.reply_to_message:
         m = message.reply_to_message
         db.set(NS, slot, {"chat_id": m.chat.id, "message_id": m.id})
         await message.edit(f"Saved media in <b>{slot}</b>")
         return
-
     saved = db.get(NS, slot, None)
     if not saved:
         await message.edit(f"Empty <b>{slot}</b>")
         return
-
     chat_id = saved.get("chat_id")
     msg_id = saved.get("message_id")
-
     try:
-        sent_msg = await client.copy_message(
-            chat_id=message.chat.id,
-            from_chat_id=chat_id,
-            message_id=msg_id
-        )
+        if self_destruct:
+            original = await client.get_messages(chat_id, msg_id)
+            if original.photo or original.video:
+                file_path = await client.download_media(original)
+                if original.photo:
+                    sent_msg = await client.send_photo(
+                        message.chat.id,
+                        file_path,
+                        ttl_seconds=ttl_seconds
+                    )
+                else:
+                    sent_msg = await client.send_video(
+                        message.chat.id,
+                        file_path,
+                        ttl_seconds=ttl_seconds
+                    )
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            else:
+                await message.edit("Only photos/videos support self-destruct.")
+                return
+        else:
+            sent_msg = await client.copy_message(
+                chat_id=message.chat.id,
+                from_chat_id=chat_id,
+                message_id=msg_id
+            )
     except Exception as e:
         await message.edit("Send failed")
         print(f"send failed for slot {slot}: {e}")
         return
-
     await _save_sent_message(client, sent_msg)
     await message.delete()
 
@@ -125,5 +150,5 @@ modules_help["dm"] = {
     "dm on": "Enable storing outgoing media.",
     "dm off": "Disable storing outgoing media.",
     "dm": "Delete all stored media globally.",
-    "s1, s2, ...": "Reply with media to save, or reuse slot.",
+    "s1, s2, ...": "Reply with media to save, or reuse slot. Use `s1 v` for self-destruct (10s), `s1 v20` for custom seconds.",
 }
