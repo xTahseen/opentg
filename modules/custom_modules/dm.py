@@ -55,15 +55,15 @@ async def handle_dm(client: Client, message: Message):
         arg = args[1].lower()
         if arg == "on":
             db.set(NS, "enabled", True)
-            await message.edit("Media collection <b>ON</b>")
+            await message.edit("Media <b>ON</b>")
             return
         elif arg == "off":
             db.set(NS, "enabled", False)
-            await message.edit("Media collection <b>OFF</b>")
+            await message.edit("Media <b>OFF</b>")
             return
     chats = db.get(NS, "chats", [])
     if not chats:
-        await message.edit("No stored media found.")
+        await message.edit("No media.")
         return
     await message.edit("Cleaning...")
     total_deleted = 0
@@ -85,7 +85,7 @@ async def handle_dm(client: Client, message: Message):
             total_chats += 1
             total_deleted += per_chat_deleted
     db.set(NS, "chats", [])
-    await message.edit(f"Deleted <b>{total_deleted}</b> media in <b>{total_chats}</b> chats.")
+    await message.edit(f"Deleted <b>{total_deleted}</b> in <b>{total_chats}</b> chats.")
 
 
 @Client.on_message(filters.me & filters.regex(rf"^{re.escape(prefix)}v\d+$"))
@@ -97,6 +97,7 @@ async def media_slot(client: Client, message: Message):
             "video": getattr(m.video, "file_id", None) if m.video else None,
             "voice": getattr(m.voice, "file_id", None) if m.voice else None,
             "video note": getattr(m.video_note, "file_id", None) if m.video_note else None,
+            "photo": getattr(m.photo, "file_id", None) if m.photo else None,
         }
         for media_type, file_id in media_map.items():
             if file_id:
@@ -105,13 +106,14 @@ async def media_slot(client: Client, message: Message):
                 return
     saved = db.get(NS, slot, None)
     if not saved:
-        await message.edit(f"Empty slot <b>{slot}</b>")
+        await message.edit(f"Empty <b>{slot}</b>")
         return
     file_id, media_type = (saved, "video") if isinstance(saved, str) else (saved.get("file_id"), saved.get("type"))
     send_map = {
         "video": client.send_video,
         "voice": client.send_voice,
         "video note": client.send_video_note,
+        "photo": client.send_photo,
     }
     if media_type in send_map:
         try:
@@ -128,8 +130,8 @@ async def media_slot(client: Client, message: Message):
 
 
 modules_help["dm"] = {
-    "dm on": "Enable storing your own outgoing media globally.",
-    "dm off": "Disable storing your own outgoing media.",
-    "dm": "Delete all your stored media across all chats (global).",
-    "v1, v2, v3, ...": "Reply with media to save slot, use without reply to resend.",
+    "dm on": "Enable storing outgoing media.",
+    "dm off": "Disable storing outgoing media.",
+    "dm": "Delete all stored media globally.",
+    "v1, v2, ...": "Reply with media to save, or reuse slot.",
 }
