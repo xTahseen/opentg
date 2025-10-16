@@ -15,38 +15,51 @@ import pytz
 import requests
 from pyrogram.errors import FloodWait
 
-genai = import_library("google.generativeai", "google-generativeai")
-safety_settings = [{"category": cat, "threshold": "BLOCK_NONE"} for cat in [
-    "HARM_CATEGORY_DANGEROUS_CONTENT",
-    "HARM_CATEGORY_HARASSMENT",
-    "HARM_CATEGORY_HATE_SPEECH",
-    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-    "HARM_CATEGORY_UNSPECIFIED"
-]]
-
-generation_config = {
-    "max_output_tokens": 40,
-}
-
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
-_gemini_model_cache = None
+genai = import_library("google.genai", "google-genai")
+MODEL_NAME = "gemini-2.0-flash"
 
 DEFAULT_HISTORY_HEAD = 50
 DEFAULT_HISTORY_TAIL = 50
+ROLES_URL = "https://gist.githubusercontent.com/iTahseen/00890d65192ca3bd9b2a62eb034b96ab/raw/roles.json"
+BOT_PIC_GROUP_ID = -1001234567890
+smileys = ["-.-", "):", ":)", "*.*", ")*"]
+la_timezone = pytz.timezone("America/Los_Angeles")
+history_collection = "custom.gchat"
+settings_collection = "custom.gsettings"
+reply_queue = asyncio.Queue()
+reply_worker_started = False
+
+def get_genai_client():
+    gemini_keys = db.get(settings_collection, "gemini_keys") or [gemini_key]
+    current_key_index = db.get(settings_collection, "current_key_index") or 0
+    api_key = gemini_keys[current_key_index]
+    return genai.Client(api_key=api_key)
+
+def get_gemini_model():
+    return db.get("custom.gsettings", "gemini_model") or MODEL_NAME
+
+def set_gemini_model(model_name: str):
+    db.set("custom.gsettings", "gemini_model", model_name)
+
+def get_voice_generation_enabled():
+    enabled = db.get(settings_collection, "voice_generation_enabled")
+    if enabled is None:
+        enabled = True
+        db.set(settings_collection, "voice_generation_enabled", True)
+    return enabled
+
+def set_voice_generation_enabled(enabled: bool):
+    db.set(settings_collection, "voice_generation_enabled", enabled)
 
 def get_history_limits():
     head = db.get("custom.gsettings", "history_head")
     tail = db.get("custom.gsettings", "history_tail")
     if not isinstance(head, int):
-        try:
-            head = int(head)
-        except:
-            head = DEFAULT_HISTORY_HEAD
+        try: head = int(head)
+        except: head = DEFAULT_HISTORY_HEAD
     if not isinstance(tail, int):
-        try:
-            tail = int(tail)
-        except:
-            tail = DEFAULT_HISTORY_TAIL
+        try: tail = int(tail)
+        except: tail = DEFAULT_HISTORY_TAIL
     return head, tail
 
 def get_chat_history(user_id, user_message, user_name):
@@ -60,84 +73,6 @@ def get_chat_history(user_id, user_message, user_name):
         chat_history_for_prompt = chat_history
     return chat_history_for_prompt
 
-def get_gemini_model():
-    global _gemini_model_cache
-    if _gemini_model_cache is not None:
-        return _gemini_model_cache
-    model = db.get("custom.gsettings", "gemini_model") or DEFAULT_GEMINI_MODEL
-    _gemini_model_cache = model
-    return model
-
-def set_gemini_model(model_name: str):
-    global _gemini_model_cache
-    db.set("custom.gsettings", "gemini_model", model_name)
-    _gemini_model_cache = model_name
-
-model = genai.GenerativeModel(get_gemini_model(), generation_config=generation_config)
-model.safety_settings = safety_settings
-
-history_collection = "custom.gchat"
-settings_collection = "custom.gsettings"
-enabled_users = db.get(settings_collection, "enabled_users") or []
-disabled_users = db.get(settings_collection, "disabled_users") or []
-gchat_for_all = db.get(settings_collection, "gchat_for_all") or False
-smileys = ["-.-", "):", ":)", "*.*", ")*"]
-la_timezone = pytz.timezone("America/Los_Angeles")
-ROLES_URL = "https://gist.githubusercontent.com/iTahseen/00890d65192ca3bd9b2a62eb034b96ab/raw/roles.json"
-BOT_PIC_GROUP_ID = -1001234567890
-
-reply_queue = asyncio.Queue()
-reply_worker_started = False
-
-async def reply_worker(client):
-    while True:
-        reply_func, args, kwargs = await reply_queue.get()
-        cleanup_file = kwargs.pop("cleanup_file", None)
-        try:
-            try:
-                await reply_func(*args, **kwargs)
-            except FloodWait as e:
-                try:
-                    await client.send_message("me", f"FloodWait: sleeping {e.value}s")
-                except Exception:
-                    pass
-                await asyncio.sleep(e.value + 1)
-                await reply_func(*args, **kwargs)
-        except Exception as e:
-            try:
-                await client.send_message("me", f"Reply queue error:\n{e}")
-            except Exception:
-                pass
-        finally:
-            if cleanup_file and os.path.exists(cleanup_file):
-                try:
-                    os.remove(cleanup_file)
-                except Exception:
-                    pass
-        await asyncio.sleep(2.1)
-
-def ensure_reply_worker(client):
-    global reply_worker_started
-    if not reply_worker_started:
-        asyncio.create_task(reply_worker(client))
-        reply_worker_started = True
-
-async def send_reply(reply_func, args, kwargs, client):
-    ensure_reply_worker(client)
-    if isinstance(args, tuple):
-        args = list(args)
-    await reply_queue.put((reply_func, args, kwargs))
-
-def get_voice_generation_enabled():
-    enabled = db.get(settings_collection, "voice_generation_enabled")
-    if enabled is None:
-        enabled = True
-        db.set(settings_collection, "voice_generation_enabled", True)
-    return enabled
-
-def set_voice_generation_enabled(enabled: bool):
-    db.set(settings_collection, "voice_generation_enabled", enabled)
-
 async def fetch_bot_pics(client, max_photos=200):
     photos = []
     async for msg in client.get_chat_history(BOT_PIC_GROUP_ID, limit=max_photos):
@@ -148,12 +83,9 @@ async def fetch_bot_pics(client, max_photos=200):
 async def handle_gpic_message(client, chat_id, bot_response):
     if bot_response.startswith(".gpic"):
         parts = bot_response.split(maxsplit=2)
-        n = 1
-        caption = ""
-        if len(parts) >= 2 and parts[1].isdigit():
-            n = int(parts[1])
-        if len(parts) == 3:
-            caption = parts[2]
+        n, caption = 1, ""
+        if len(parts) >= 2 and parts[1].isdigit(): n = int(parts[1])
+        if len(parts) == 3: caption = parts[2]
         photos = await fetch_bot_pics(client)
         if not photos:
             await send_reply(client.send_message, ["No bot pictures in group/channel."], {}, client)
@@ -184,10 +116,7 @@ async def fetch_roles():
 
 def build_prompt(bot_role, chat_history, user_message):
     timestamp = datetime.datetime.now(la_timezone).strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(bot_role, list):
-        role_text = "\n".join(bot_role)
-    else:
-        role_text = str(bot_role)
+    role_text = "\n".join(bot_role) if isinstance(bot_role, list) else str(bot_role)
     chat_context = "\n".join(chat_history)
     prompt = (
         f"Current Time: {timestamp}\n"
@@ -196,40 +125,38 @@ def build_prompt(bot_role, chat_history, user_message):
         f"User Message:\n{user_message}"
     )
     return prompt
-    
-async def generate_gemini_response(input_data, chat_history, user_id):
-    retries = 3
-    gemini_keys = db.get(settings_collection, "gemini_keys") or [gemini_key]
-    current_key_index = db.get(settings_collection, "current_key_index") or 0
-    while retries > 0:
-        try:
-            current_key = gemini_keys[current_key_index]
-            genai.configure(api_key=current_key)
-            model = genai.GenerativeModel(get_gemini_model(), generation_config=generation_config)
-            model.safety_settings = safety_settings
-            response = model.generate_content(input_data)
-            bot_response = response.text.strip()
-            full_history = db.get(history_collection, f"chat_history.{user_id}") or []
-            full_history.append(bot_response)
-            db.set(history_collection, f"chat_history.{user_id}", full_history)
-            return bot_response
-        except Exception as e:
-            if "429" in str(e) or "invalid" in str(e).lower():
-                retries -= 1
-                current_key_index = (current_key_index + 1) % len(gemini_keys)
-                db.set(settings_collection, "current_key_index", current_key_index)
-                await asyncio.sleep(4)
-            else:
-                raise e
 
-async def upload_file_to_gemini(file_path, file_type):
-    uploaded_file = genai.upload_file(file_path)
-    while uploaded_file.state.name == "PROCESSING":
-        await asyncio.sleep(10)
-        uploaded_file = genai.get_file(uploaded_file.name)
-    if uploaded_file.state.name == "FAILED":
-        raise ValueError(f"{file_type.capitalize()} failed to process.")
-    return uploaded_file
+async def reply_worker(client):
+    while True:
+        reply_func, args, kwargs = await reply_queue.get()
+        cleanup_file = kwargs.pop("cleanup_file", None)
+        try:
+            try:
+                await reply_func(*args, **kwargs)
+            except FloodWait as e:
+                try: await client.send_message("me", f"FloodWait: sleeping {e.value}s")
+                except Exception: pass
+                await asyncio.sleep(e.value + 1)
+                await reply_func(*args, **kwargs)
+        except Exception as e:
+            try: await client.send_message("me", f"Reply queue error:\n{e}")
+            except Exception: pass
+        finally:
+            if cleanup_file and os.path.exists(cleanup_file):
+                try: os.remove(cleanup_file)
+                except Exception: pass
+        await asyncio.sleep(2.1)
+
+def ensure_reply_worker(client):
+    global reply_worker_started
+    if not reply_worker_started:
+        asyncio.create_task(reply_worker(client))
+        reply_worker_started = True
+
+async def send_reply(reply_func, args, kwargs, client):
+    ensure_reply_worker(client)
+    if isinstance(args, tuple): args = list(args)
+    await reply_queue.put((reply_func, args, kwargs))
 
 async def send_typing_action(client, chat_id, user_message):
     await client.send_chat_action(chat_id=chat_id, action=enums.ChatAction.TYPING)
@@ -256,6 +183,51 @@ async def handle_voice_message(client, chat_id, bot_response):
             return True
     return False
 
+async def upload_file_to_gemini(file_path, file_type):
+    client = get_genai_client()
+    uploaded_file = await asyncio.to_thread(client.files.upload, file=file_path)
+    for _ in range(120):
+        state = getattr(uploaded_file, "state", None)
+        name = getattr(uploaded_file, "name", None) or getattr(uploaded_file, "id", None)
+        if state and getattr(state, "name", "").upper() == "ACTIVE":
+            return uploaded_file
+        if state and getattr(state, "name", "").upper() == "FAILED":
+            raise ValueError(f"{file_type.capitalize()} failed to process")
+        if name:
+            try:
+                uploaded_file = await asyncio.to_thread(client.files.get, name=name)
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+    raise ValueError(f"{file_type.capitalize()} upload timed out")
+
+async def generate_gemini_response(input_data, chat_history, user_id):
+    retries = 3
+    gemini_keys = db.get(settings_collection, "gemini_keys") or [gemini_key]
+    current_key_index = db.get(settings_collection, "current_key_index") or 0
+    model_name = get_gemini_model()
+    while retries > 0:
+        try:
+            client = genai.Client(api_key=gemini_keys[current_key_index])
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=input_data
+            )
+            bot_response = response.text.strip()
+            full_history = db.get(history_collection, f"chat_history.{user_id}") or []
+            full_history.append(bot_response)
+            db.set(history_collection, f"chat_history.{user_id}", full_history)
+            return bot_response
+        except Exception as e:
+            if "429" in str(e) or "invalid" in str(e).lower():
+                retries -= 1
+                current_key_index = (current_key_index + 1) % len(gemini_keys)
+                db.set(settings_collection, "current_key_index", current_key_index)
+                await asyncio.sleep(4)
+            else:
+                raise e
+
 sticker_gif_buffer = defaultdict(list)
 sticker_gif_timer = {}
 
@@ -264,8 +236,7 @@ async def process_sticker_gif_buffer(client, user_id):
         await asyncio.sleep(8)
         msgs = sticker_gif_buffer.pop(user_id, [])
         sticker_gif_timer.pop(user_id, None)
-        if not msgs:
-            return
+        if not msgs: return
         last_msg = msgs[-1]
         random_smiley = random.choice(smileys)
         await asyncio.sleep(random.uniform(5, 10))
@@ -278,6 +249,9 @@ async def process_sticker_gif_buffer(client, user_id):
 )
 async def handle_sticker_gif_buffered(client: Client, message: Message):
     user_id = message.from_user.id
+    enabled_users = db.get(settings_collection, "enabled_users") or []
+    disabled_users = db.get(settings_collection, "disabled_users") or []
+    gchat_for_all = db.get(settings_collection, "gchat_for_all") or False
     if user_id in disabled_users or (not gchat_for_all and user_id not in enabled_users):
         return
     sticker_gif_buffer[user_id].append(message)
@@ -291,6 +265,9 @@ async def gchat(client: Client, message: Message):
         user_id = message.from_user.id
         user_name = message.from_user.first_name or "User"
         user_message = message.text.strip()
+        enabled_users = db.get(settings_collection, "enabled_users") or []
+        disabled_users = db.get(settings_collection, "disabled_users") or []
+        gchat_for_all = db.get(settings_collection, "gchat_for_all") or False
         if user_id in disabled_users or (not gchat_for_all and user_id not in enabled_users):
             return
         roles = await fetch_roles()
@@ -318,37 +295,11 @@ async def gchat(client: Client, message: Message):
             chat_history = get_chat_history(user_id, combined_message, user_name)
             await asyncio.sleep(random.choice([3, 5, 7]))
             await send_typing_action(client, message.chat.id, combined_message)
-            gemini_keys = db.get(settings_collection, "gemini_keys") or [gemini_key]
-            current_key_index = db.get(settings_collection, "current_key_index") or 0
-            retries = len(gemini_keys) * 2
-            while retries > 0:
-                try:
-                    current_key = gemini_keys[current_key_index]
-                    genai.configure(api_key=current_key)
-                    model = genai.GenerativeModel(get_gemini_model(), generation_config=generation_config)
-                    model.safety_settings = safety_settings
-                    prompt = build_prompt(bot_role, chat_history, combined_message)
-                    response = model.start_chat().send_message(prompt)
-                    bot_response = response.text.strip()
-                    if await handle_gpic_message(client, message.chat.id, bot_response):
-                        return
-                    full_history = db.get(history_collection, f"chat_history.{user_id}") or []
-                    full_history.append(bot_response)
-                    db.set(history_collection, f"chat_history.{user_id}", full_history)
-                    if await handle_voice_message(client, message.chat.id, bot_response):
-                        return
-                    await send_reply(message.reply_text, [bot_response], {}, client)
-                    return
-                except Exception as e:
-                    if "429" in str(e) or "invalid" in str(e).lower():
-                        retries -= 1
-                        if retries % 2 == 0:
-                            current_key_index = (current_key_index + 1) % len(gemini_keys)
-                            db.set(settings_collection, "current_key_index", current_key_index)
-                        await asyncio.sleep(4)
-                    else:
-                        await send_reply(client.send_message, ["me", f"gchat error:\n\n{str(e)}"], {}, client)
-                        return
+            prompt = build_prompt(bot_role, chat_history, combined_message)
+            bot_response = await generate_gemini_response(prompt, chat_history, user_id)
+            if await handle_gpic_message(client, message.chat.id, bot_response): return
+            if await handle_voice_message(client, message.chat.id, bot_response): return
+            await send_reply(message.reply_text, [bot_response], {}, client)
         client.message_timers[user_id] = asyncio.create_task(process_combined_messages())
     except Exception as e:
         await send_reply(client.send_message, ["me", f"gchat module error:\n\n{str(e)}"], {}, client)
@@ -359,6 +310,9 @@ async def handle_files(client: Client, message: Message):
     try:
         user_id = message.from_user.id
         user_name = message.from_user.first_name or "User"
+        enabled_users = db.get(settings_collection, "enabled_users") or []
+        disabled_users = db.get(settings_collection, "disabled_users") or []
+        gchat_for_all = db.get(settings_collection, "gchat_for_all") or False
         if user_id in disabled_users or (not gchat_for_all and user_id not in enabled_users):
             return
         roles = await fetch_roles()
@@ -380,17 +334,14 @@ async def handle_files(client: Client, message: Message):
                     await asyncio.sleep(10)
                     image_paths = client.image_buffer.pop(user_id, [])
                     client.image_timers[user_id] = None
-                    if not image_paths:
-                        return
+                    if not image_paths: return
                     sample_images = [Image.open(img_path) for img_path in image_paths]
                     prompt_text = "User sent multiple images." + (f" Caption: {caption}" if caption else "")
                     prompt = build_prompt(bot_role, chat_history, prompt_text)
                     input_data = [prompt] + sample_images
                     response = await generate_gemini_response(input_data, chat_history, user_id)
-                    if await handle_gpic_message(client, message.chat.id, response):
-                        return
-                    if await handle_voice_message(client, message.chat.id, response):
-                        return
+                    if await handle_gpic_message(client, message.chat.id, response): return
+                    if await handle_voice_message(client, message.chat.id, response): return
                     await send_reply(message.reply, [response], {"reply_to_message_id": message.id}, client)
                 client.image_timers[user_id] = asyncio.create_task(process_images())
             return
@@ -409,10 +360,8 @@ async def handle_files(client: Client, message: Message):
             prompt = build_prompt(bot_role, chat_history, prompt_text)
             input_data = [prompt, uploaded_file]
             response = await generate_gemini_response(input_data, chat_history, user_id)
-            if await handle_gpic_message(client, message.chat.id, response):
-                return
-            if await handle_voice_message(client, message.chat.id, response):
-                return
+            if await handle_gpic_message(client, message.chat.id, response): return
+            if await handle_voice_message(client, message.chat.id, response): return
             await send_reply(message.reply, [response], {"reply_to_message_id": message.id}, client)
     except Exception as e:
         await send_reply(client.send_message, ["me", f"handle_files error:\n\n{str(e)}"], {}, client)
@@ -455,9 +404,6 @@ async def set_gemini_key(client: Client, message: Message):
             if 0 <= index < len(gemini_keys):
                 current_key_index = index
                 db.set(settings_collection, "current_key_index", current_key_index)
-                genai.configure(api_key=gemini_keys[current_key_index])
-                model = genai.GenerativeModel(get_gemini_model())
-                model.safety_settings = safety_settings
                 await send_reply(message.edit_text, [f"Current key set to: {key}"], {}, client)
             else:
                 await send_reply(message.edit_text, [f"Invalid key index: {key}"], {}, client)
@@ -539,6 +485,9 @@ async def gchat_command(client: Client, message: Message):
             return
         command = parts[1].lower()
         user_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else message.chat.id
+        enabled_users = db.get(settings_collection, "enabled_users") or []
+        disabled_users = db.get(settings_collection, "disabled_users") or []
+        gchat_for_all = db.get(settings_collection, "gchat_for_all") or False
         if command == "on":
             if user_id in disabled_users:
                 disabled_users.remove(user_id)
@@ -559,7 +508,6 @@ async def gchat_command(client: Client, message: Message):
             db.remove(history_collection, f"chat_history.{user_id}")
             await send_reply(message.edit_text, [f"<spoiler>Deleted: {user_id}</spoiler>"], {}, client)
         elif command == "all":
-            global gchat_for_all
             gchat_for_all = not gchat_for_all
             db.set(settings_collection, "gchat_for_all", gchat_for_all)
             await send_reply(message.edit_text, [f"All: {'enabled' if gchat_for_all else 'disabled'}"], {}, client)
@@ -652,13 +600,12 @@ async def test_keys(client: Client, message: Message):
 
         for idx, key in enumerate(gemini_keys):
             try:
-                genai.configure(api_key=key)
-                test_model = genai.GenerativeModel(
-                    get_gemini_model(),
-                    generation_config=generation_config
+                client_genai = genai.Client(api_key=key)
+                response = await asyncio.to_thread(
+                    client_genai.models.generate_content,
+                    model=get_gemini_model(),
+                    contents=test_prompt
                 )
-                test_model.safety_settings = safety_settings
-                response = test_model.generate_content(test_prompt)
                 text = getattr(response, "text", None) or getattr(response, "result", None)
                 status = "OK" if text else "No response"
             except Exception as e:
