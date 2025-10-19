@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-HUGGINGFACE_API_TOKEN = "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"
+HUGGINGFACE_API_TOKEN = "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"
 
 async def query_huggingface(payload):
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
