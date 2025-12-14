@@ -5,12 +5,12 @@
 #  it under the terms of the GNU General Public License as published by
 #  the Free Software Foundation, either version 3 of the License, or
 #  (at your option) any later version.
-
+#
 #  This program is distributed in the hope that it will be useful,
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
-
+#
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -29,6 +29,7 @@ from io import BytesIO
 from types import ModuleType
 from typing import Dict, Tuple
 
+import logging
 import psutil
 from pyrogram import Client, errors, filters
 from pyrogram.errors import FloodWait, MessageNotModified, UserNotParticipant
@@ -38,6 +39,8 @@ from pyrogram.enums import ChatMembersFilter
 from utils.db import db
 
 from .misc import modules_help, prefix, requirements_list
+
+log = logging.getLogger(__name__)
 
 META_COMMENTS = re.compile(r"^ *# *meta +(\S+) *: *(.*?)\s*$", re.MULTILINE)
 interact_with_to_delete = []
@@ -219,7 +222,7 @@ def restart() -> None:
             music_bot_process.terminate()
         except psutil.NoSuchProcess:
             print("Music bot is not running.")
-    os.execvp(sys.executable, [sys.executable, "main.py"]) # skipcq
+    os.execvp(sys.executable, [sys.executable, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep +"main.py"]) # skipcq
 
 
 def format_exc(e: Exception, suffix="") -> str:
@@ -496,6 +499,13 @@ async def load_module(
 
 
 async def unload_module(module_name: str, client: Client) -> bool:
+    """
+    Safely unload a module and remove its registered handlers.
+
+    This function keeps behavior compatible with the previous implementation but
+    handles the case where the stored (handler, group) pair does not match the
+    dispatcher's actual registration (which was causing ValueError: list.remove(x): x not in list).
+    """
     path = "modules.custom_modules." + module_name
     if path not in sys.modules:
         return False
@@ -503,11 +513,70 @@ async def unload_module(module_name: str, client: Client) -> bool:
     module = importlib.import_module(path)
 
     for _name, obj in vars(module).items():
-        for handler, group in getattr(obj, "handlers", []):
-            client.remove_handler(handler, group)
+        handlers_list = getattr(obj, "handlers", []) or []
+        for entry in handlers_list:
+            # Normalize entry (expected to be (handler, group))
+            try:
+                handler, group = entry
+            except Exception:
+                # If entry can't be unpacked, skip but log for visibility
+                log.warning("Unexpected handler entry format in module %s: %r", module_name, entry)
+                continue
 
-    del modules_help[module_name]
-    del sys.modules[path]
+            try:
+                # Try normal removal first
+                try:
+                    client.remove_handler(handler, group)
+                except ValueError:
+                    # Handler not found in the recorded group: attempt to locate it in dispatcher's groups
+                    log.warning(
+                        "client.remove_handler(ValueError) for handler id=%s repr=%s group=%s (module=%s). "
+                        "Searching dispatcher's groups for identity match.",
+                        id(handler), repr(handler), group, module_name,
+                    )
+                    disp = getattr(client, "dispatcher", None)
+                    removed = False
+                    if disp is not None:
+                        groups = getattr(disp, "groups", {}) or {}
+                        for grp_key, handlers in list(groups.items()):
+                            for h in list(handlers):
+                                if h is handler:
+                                    try:
+                                        handlers.remove(h)
+                                        removed = True
+                                        log.info(
+                                            "Removed handler id=%s from dispatcher group=%s (module=%s)",
+                                            id(handler), grp_key, module_name,
+                                        )
+                                        break
+                                    except Exception:
+                                        log.exception(
+                                            "Failed to remove handler id=%s from group=%s (module=%s)",
+                                            id(handler), grp_key, module_name,
+                                        )
+                                        raise
+                            if removed:
+                                break
+                    if not removed:
+                        # If we couldn't find it, log and continue (do not raise)
+                        log.warning(
+                            "Handler id=%s for module %s not found in any dispatcher group; continuing.",
+                            id(handler), module_name,
+                        )
+            except Exception:
+                # Log unexpected errors and continue unloading remaining handlers
+                log.exception("Error while removing handler %r for module %s", entry, module_name)
+
+    # Cleanup module metadata and module import
+    try:
+        del modules_help[module_name]
+    except Exception:
+        log.debug("Failed to delete modules_help[%s] (it may have been removed already)", module_name, exc_info=True)
+
+    try:
+        del sys.modules[path]
+    except Exception:
+        log.debug("Failed to delete sys.modules[%s] (it may have been removed already)", path, exc_info=True)
 
     return True
 
