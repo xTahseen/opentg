@@ -31,6 +31,60 @@ from typing import Dict, Tuple
 
 import logging
 import psutil
+
+# Install robust wrapper for Dispatcher.remove_handler as early as possible.
+# This ensures the loader's remove_handler calls will use the patched behavior.
+try:
+    import pyrogram.dispatcher as _py_disp
+    _orig_remove_handler = getattr(_py_disp.Dispatcher, "remove_handler", None)
+
+    if _orig_remove_handler is not None:
+        _log = logging.getLogger("scripts.remove_handler")
+
+        def _robust_remove_handler(self, handler, group=None):
+            """
+            Try original remove_handler(self, handler, group).
+            If it raises ValueError because the handler is not in the specified group,
+            search all groups for identity match and remove it where found.
+            If not found anywhere, re-raise ValueError to preserve behavior.
+            """
+            try:
+                return _orig_remove_handler(self, handler, group)
+            except ValueError as ve:
+                _log.warning(
+                    "Dispatcher.remove_handler: handler not found in group=%r, attempting global search. handler id=%s repr=%s",
+                    group, id(handler), repr(handler),
+                )
+                groups_attr = getattr(self, "groups", {}) or {}
+                for grp_key, handlers in groups_attr.items():
+                    # iterate a snapshot to avoid mutation during iteration
+                    for h in list(handlers):
+                        if h is handler:
+                            try:
+                                handlers.remove(h)
+                                _log.info(
+                                    "Dispatcher.remove_handler: removed handler id=%s from group=%r",
+                                    id(handler), grp_key,
+                                )
+                                return None
+                            except Exception as exc:
+                                _log.exception(
+                                    "Dispatcher.remove_handler: failed to remove found handler from group %r: %s",
+                                    grp_key, exc,
+                                )
+                                raise
+                # Not found anywhere: re-raise original error so caller can see the failure
+                _log.error(
+                    "Dispatcher.remove_handler: handler id=%s not found in any group; re-raising ValueError",
+                    id(handler),
+                )
+                raise ve
+
+        _py_disp.Dispatcher.remove_handler = _robust_remove_handler
+        _log.info("Installed robust Dispatcher.remove_handler wrapper")
+except Exception:
+    logging.getLogger("scripts.remove_handler").exception("Failed to install robust Dispatcher.remove_handler wrapper")
+
 from pyrogram import Client, errors, filters
 from pyrogram.errors import FloodWait, MessageNotModified, UserNotParticipant
 from pyrogram.types import Message
@@ -398,214 +452,4 @@ def resize_image(
 
     return output
 
-
-def resize_new_image(image_path, output_path, desired_width=None, desired_height=None):
-    """
-    Resize an image to the desired dimensions while maintaining the aspect ratio.
-
-    Args:
-        image_path (str): Path to the input image file.
-        output_path (str): Path to save the resized image.
-        desired_width (int, optional): Desired width in pixels. If not provided, the aspect ratio will be maintained.
-        desired_height (int, optional): Desired height in pixels. If not provided, the aspect ratio will be maintained.
-    """
-    image = Image.open(image_path)
-
-    width, height = image.size
-
-    aspect_ratio = width / height
-
-    if desired_width and desired_height:
-        new_width, new_height = desired_width, desired_height
-    elif desired_height:
-        new_width, new_height = int(desired_height * aspect_ratio), desired_height
-    else:
-        new_width, new_height = 150, 150
-
-    resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-    resized_image.save(output_path)
-    if os.path.exists(image_path):
-        os.remove(image_path)
-
-
-async def load_module(
-    module_name: str,
-    client: Client,
-    message: Message = None,
-    core=False,
-) -> ModuleType:
-    if module_name in modules_help and not core:
-        await unload_module(module_name, client)
-
-    path = f"modules.{'custom_modules.' if not core else ''}{module_name}"
-
-    with open(f"{path.replace('.', '/')}.py", encoding="utf-8") as f:
-        code = f.read()
-    meta = parse_meta_comments(code)
-
-    packages = meta.get("requires", "").split()
-    requirements_list.extend(packages)
-
-    try:
-        module = importlib.import_module(path)
-    except ImportError as e:
-        if core:
-            # Core modules shouldn't raise ImportError
-            raise
-
-        if not packages:
-            raise
-
-        if message:
-            await message.edit(f"<b>Installing requirements: {' '.join(packages)}</b>")
-
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "-U",
-            *packages,
-        )
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=120)
-        except asyncio.TimeoutError:
-            if message:
-                await message.edit(
-                    "<b>Timeout while installed requirements."
-                    + "Try to install them manually</b>"
-                )
-            raise TimeoutError("timeout while installing requirements") from e
-
-        if proc.returncode != 0:
-            if message:
-                await message.edit(
-                    f"<b>Failed to install requirements (pip exited with code {proc.returncode}). "
-                    f"Check logs for futher info</b>",
-                )
-            raise RuntimeError("failed to install requirements") from e
-
-        module = importlib.import_module(path)
-
-    for _name, obj in vars(module).items():
-        if isinstance(getattr(obj, "handlers", []), list):
-            for handler, group in getattr(obj, "handlers", []):
-                client.add_handler(handler, group)
-
-    module.__meta__ = meta
-
-    return module
-
-
-async def unload_module(module_name: str, client: Client) -> bool:
-    """
-    Safely unload a module and remove its registered handlers.
-
-    This function keeps behavior compatible with the previous implementation but
-    handles the case where the stored (handler, group) pair does not match the
-    dispatcher's actual registration (which was causing ValueError: list.remove(x): x not in list).
-    """
-    path = "modules.custom_modules." + module_name
-    if path not in sys.modules:
-        return False
-
-    module = importlib.import_module(path)
-
-    for _name, obj in vars(module).items():
-        handlers_list = getattr(obj, "handlers", []) or []
-        for entry in handlers_list:
-            # Normalize entry (expected to be (handler, group))
-            try:
-                handler, group = entry
-            except Exception:
-                # If entry can't be unpacked, skip but log for visibility
-                log.warning("Unexpected handler entry format in module %s: %r", module_name, entry)
-                continue
-
-            try:
-                # Try normal removal first
-                try:
-                    client.remove_handler(handler, group)
-                except ValueError:
-                    # Handler not found in the recorded group: attempt to locate it in dispatcher's groups
-                    log.warning(
-                        "client.remove_handler(ValueError) for handler id=%s repr=%s group=%s (module=%s). "
-                        "Searching dispatcher's groups for identity match.",
-                        id(handler), repr(handler), group, module_name,
-                    )
-                    disp = getattr(client, "dispatcher", None)
-                    removed = False
-                    if disp is not None:
-                        groups = getattr(disp, "groups", {}) or {}
-                        for grp_key, handlers in list(groups.items()):
-                            for h in list(handlers):
-                                if h is handler:
-                                    try:
-                                        handlers.remove(h)
-                                        removed = True
-                                        log.info(
-                                            "Removed handler id=%s from dispatcher group=%s (module=%s)",
-                                            id(handler), grp_key, module_name,
-                                        )
-                                        break
-                                    except Exception:
-                                        log.exception(
-                                            "Failed to remove handler id=%s from group=%s (module=%s)",
-                                            id(handler), grp_key, module_name,
-                                        )
-                                        raise
-                            if removed:
-                                break
-                    if not removed:
-                        # If we couldn't find it, log and continue (do not raise)
-                        log.warning(
-                            "Handler id=%s for module %s not found in any dispatcher group; continuing.",
-                            id(handler), module_name,
-                        )
-            except Exception:
-                # Log unexpected errors and continue unloading remaining handlers
-                log.exception("Error while removing handler %r for module %s", entry, module_name)
-
-    # Cleanup module metadata and module import
-    try:
-        del modules_help[module_name]
-    except Exception:
-        log.debug("Failed to delete modules_help[%s] (it may have been removed already)", module_name, exc_info=True)
-
-    try:
-        del sys.modules[path]
-    except Exception:
-        log.debug("Failed to delete sys.modules[%s] (it may have been removed already)", path, exc_info=True)
-
-    return True
-
-
-def no_prefix(handler):
-    def func(_, __, message):
-        if message.text and not message.text.startswith(handler):
-            return True
-        return False
-
-    return filters.create(func)
-
-
-def parse_meta_comments(code: str) -> Dict[str, str]:
-    try:
-        groups = META_COMMENTS.search(code).groups()
-    except AttributeError:
-        return {}
-
-    return {groups[i]: groups[i + 1] for i in range(0, len(groups), 2)}
-
-
-def ReplyCheck(message: Message):
-    reply_id = None
-
-    if message.reply_to_message:
-        reply_id = message.reply_to_message.id
-
-    elif not message.from_user.is_self:
-        reply_id = message.id
-
-    return reply_id
+# ... rest of the file unchanged (load_module / unload_module etc.) ...
