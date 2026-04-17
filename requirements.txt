@@ -1,4 +1,4 @@
-pyrofork==2.3.69
+pyrofork==2.3.64
 tgcrypto
 humanize
 pymongo
@@ -10,3 +10,11 @@ dulwich==1.1.0
 aiohttp
 aiofiles
 bottle
+
+requests
+pySmartDL
+ffmpeg-python
+gemini-webapi
+google-generativeai
+pytgcalls==3.0.0.dev24
+pytz
