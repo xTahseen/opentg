@@ -8,7 +8,7 @@ from utils.config import gemini_key
 import google.generativeai as genai
 
 genai.configure(api_key=gemini_key)
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.1-flash-lite-preview"
 COOK_GEN_CONFIG = {
     "temperature": 0.7,
     "top_p": 0.95,
