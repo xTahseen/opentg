@@ -6,23 +6,27 @@ import time
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import unquote
-import requests
+
+import aiohttp
 import urllib3
 from pyrogram import Client, enums, filters
 from pyrogram.types import Message
-from pySmartDL import SmartDL
 from utils.config import apiflash_key
-from utils import modules_help, prefix
-from utils.scripts import format_exc, humanbytes, progress
+from utils.scripts import (
+    format_exc,
+    generate_screenshot,
+    humanbytes,
+    import_library,
+    progress,
+)
 
-def generate_screenshot(url):
-    api_url = f"https://api.apiflash.com/v1/urltoimage?access_key={apiflash_key}&url={url}&format=png"
-    response = requests.get(api_url)
-    if response.status_code == 200:
-        return BytesIO(response.content)
-    return None
+from utils import modules_help, prefix
+
+pySmartDL = import_library("pySmartDL")
+from pySmartDL import SmartDL
 
 http = urllib3.PoolManager()
+
 
 @Client.on_message(filters.command("short", prefix) & filters.me)
 async def short(_, message: Message):
@@ -38,6 +42,7 @@ async def short(_, message: Message):
         r.data.decode().replace("https://", "<b>Shortened Url:</b>"),
         disable_web_page_preview=True,
     )
+
 
 @Client.on_message(filters.command("urldl", prefix) & filters.me)
 async def urldl(client: Client, message: Message):
@@ -57,18 +62,25 @@ async def urldl(client: Client, message: Message):
 
     c_time = time.time()
 
-    resp = requests.head(link, allow_redirects=True, timeout=5)
-    if resp.status_code != 200:
-        return await message.edit("<b>Failed to fetch request header information</b>")
+    async with aiohttp.ClientSession() as session:
+        async with session.head(
+            link, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=5)
+        ) as resp:
+            if resp.status != 200:
+                return await message.edit(
+                    "<b>Failed to fetch request header information</b>"
+                )
+            content_type = resp.headers.get("Content-Type", "").split(";")[0]
 
-    content_type = resp.headers.get("Content-Type").split(";")[0]
     extension = mimetypes.guess_extension(content_type)
 
+    # Check if the file is an executable binary
     is_executable = content_type in [
         "application/octet-stream",
         "application/x-msdownload",
     ]
 
+    # Get the file extension from the URL
     url_extension = os.path.splitext(link)[1].lower()
 
     try:
@@ -159,6 +171,7 @@ async def urldl(client: Client, message: Message):
     else:
         await message.edit("<b>Failed to download</b>")
 
+
 @Client.on_message(filters.command("upload", prefix) & filters.me)
 async def upload_cmd(_, message: Message):
     max_size = 512 * 1024 * 1024
@@ -190,91 +203,36 @@ async def upload_cmd(_, message: Message):
         return
 
     await message.edit("<b>Uploading...</b>")
-    with open(file_name, "rb") as f:
-        response = requests.post(
-            "https://x0.at",
-            files={"file": f},
-        )
 
-    if response.ok:
+    async with aiohttp.ClientSession() as session:
+        with open(file_name, "rb") as f:
+            form = aiohttp.FormData()
+            form.add_field("file", f)
+            async with session.post("https://x0.at", data=form) as resp:
+                response_ok = resp.status == 200
+                response_text = await resp.text()
+
+    if response_ok:
         file_size_mb = os.path.getsize(file_name) / 1024 / 1024
         file_age = int(
             min_file_age
             + (max_file_age - min_file_age) * ((1 - (file_size_mb / max_size_mb)) ** 2)
         )
-        url = response.text.strip()
+        url = response_text.replace("https://", "")
         await message.edit(
-            f"<b>Your URL: {url}</b>\n<b>Your file will remain live for {file_age} days</b>",
+            f"<b>Your URL: {url}\nYour file will remain live for {file_age} days</b>",
             disable_web_page_preview=True,
         )
     else:
         await message.edit(
-            f"<b>API returned an error!\n{response.text}\n Not allowed</b>"
+            f"<b>API returned an error!\n{response_text}\n Not allowed</b>"
         )
+        print(response_text)
     if os.path.exists(file_name):
         os.remove(file_name)
 
-@Client.on_message(filters.command("uploader", prefix) & filters.me)
-async def uploader_cmd(_, message: Message):
-    max_size = 512 * 1024 * 1024
-    max_size_mb = 512
 
-    ms_ = await message.edit("`Downloading...`", parse_mode=enums.ParseMode.MARKDOWN)
-    c_time = time.time()
-
-    try:
-        file_name = await message.download(
-            progress=progress, progress_args=(ms_, c_time, "`Downloading...`")
-        )
-    except ValueError:
-        try:
-            file_name = await message.reply_to_message.download(
-                progress=progress, progress_args=(ms_, c_time, "`Downloading...`")
-            )
-        except ValueError:
-            await message.edit("<b>File to upload not found</b>")
-            return
-
-    if os.path.getsize(file_name) > max_size:
-        await message.edit(f"<b>Files longer than {max_size_mb}MB isn't supported</b>")
-        if os.path.exists(file_name):
-            os.remove(file_name)
-        return
-
-    await message.edit("<b>Uploading to uploader.sh...</b>")
-    try:
-        with open(file_name, "rb") as f:
-            response = requests.put(
-                "https://uploader.sh/",
-                data=f,
-                headers={"Content-Type": "application/octet-stream"},
-                timeout=30
-            )
-        if response.ok and "wget " in response.text:
-            wget_url = None
-            for line in response.text.splitlines():
-                if line.startswith("wget "):
-                    wget_url = line.split("wget ")[1].strip()
-                    break
-            if wget_url:
-                dl_url = wget_url.replace("wget http://", "https://") + "?download=1"
-                await message.edit(
-                    f"<b>Your URL: {dl_url}</b>\n<b>Your file will remain live for 3 days</b>",
-                    disable_web_page_preview=True,
-                )
-            else:
-                await message.edit("<b>Couldn't parse uploader.sh response!</b>")
-        else:
-            await message.edit(
-                f"<b>uploader.sh API returned an error!\n{response.text}</b>"
-            )
-    except Exception as e:
-        await message.edit(f"<b>uploader.sh upload failed: {format_exc(e)}</b>")
-
-    if os.path.exists(file_name):
-        os.remove(file_name)
-
-@Client.on_message(filters.command(["ss", "ws", "webshot"], prefix) & filters.me)
+@Client.on_message(filters.command(["ss", "webshot"], prefix) & filters.me)
 async def webshot(client: Client, message: Message):
     if len(message.command) > 1:
         url = message.text.split(maxsplit=1)[1]
@@ -294,7 +252,7 @@ async def webshot(client: Client, message: Message):
     await message.edit("<b>Generating screenshot...</b>")
 
     try:
-        screenshot_data = generate_screenshot(url)
+        screenshot_data = await generate_screenshot(url)
         if screenshot_data:
             await message.delete()
             await client.send_photo(
@@ -307,11 +265,11 @@ async def webshot(client: Client, message: Message):
     except Exception as e:
         await message.edit_text(f"An error occurred: {format_exc(e)}")
 
+
 modules_help["url"] = {
     "short [url]*": "short url",
     "urldl [url]*": "download url content",
-    "upload [file|reply]*": "upload file to x0.at",
-    "uploader [file|reply]*": "upload file to uploader.sh",
+    "upload [file|reply]*": "upload file to internet",
     "webshot [link]*": "Screenshot of web page",
     "ws [reply to link]*": "Screenshot of web page",
 }
