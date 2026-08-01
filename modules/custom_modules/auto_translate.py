@@ -32,7 +32,7 @@ def auto_translate_filter(_, __, message: Message):
 
 auto_translate_filter = create(auto_translate_filter)
 
-@Client.on_message(filters.command(["setglang"], prefix))
+@Client.on_message(filters.command(["setlang"], prefix))
 async def set_language(_, message: Message):
     """Set the preferred language for a chat."""
     if len(message.command) < 2:
@@ -45,7 +45,7 @@ async def set_language(_, message: Message):
     db.set("custom.gtranslate", str(message.chat.id), lang_code)
     await message.edit(f"<b>Language has been set to</b> <code>[{lang_code}]</code>.")
 
-@Client.on_message(filters.command(["glang"], prefix))
+@Client.on_message(filters.command(["lang"], prefix))
 async def language_status(_, message: Message):
     """Show the current language or turn off auto-translation."""
     chat_id = str(message.chat.id)
@@ -83,8 +83,8 @@ async def auto_translate(_, message: Message):
     except Exception as e:
         await message.reply(f"Translation failed: {e}")
 
-modules_help["translate_auto"] = {
-    "setglang <language_code>": "Set the preferred language for this chat.",
-    "glang": "Show the chat's language or use `glang off` to turn off auto-translation.",
+modules_help["auto_translate"] = {
+    "setlang <language_code>": "Set the preferred language for this chat.",
+    "lang": "Show the chat's language or use `lang off` to turn off auto-translation.",
     "Auto-translation": "Automatically translates and edits your messages in the chat to the set language."
 }
