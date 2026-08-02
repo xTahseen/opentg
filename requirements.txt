@@ -1,4 +1,4 @@
-pyrofork==2.3.64
+pyrofork==2.3.69
 tgcrypto
 humanize
 pymongo
