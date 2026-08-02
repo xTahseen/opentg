@@ -1,4 +1,5 @@
 import asyncio
+import mimetypes
 import os
 import random
 import time
@@ -260,8 +261,22 @@ async def generate_gemini_response(input_data, chat_history, topic_id, bot_role=
     return ""
 
 
-async def upload_file_to_gemini(file_path, file_type):
-    uploaded_file = await asyncio.to_thread(genai.upload_file, file_path)
+async def upload_file_to_gemini(file_path, file_type, mime_type=None):
+    if not mime_type:
+        mime_type = mimetypes.guess_type(file_path)[0]
+    if not mime_type:
+        # Fallback defaults when neither Telegram nor the OS can tell us the type
+        fallback_mime = {
+            "video": "video/mp4",
+            "audio": "audio/ogg",
+            "pdf": "application/pdf",
+            "document": "application/octet-stream",
+        }
+        mime_type = fallback_mime.get(file_type, "application/octet-stream")
+
+    uploaded_file = await asyncio.to_thread(
+        genai.upload_file, file_path, mime_type=mime_type
+    )
     while uploaded_file.state.name == "PROCESSING":
         await asyncio.sleep(10)
         uploaded_file = await asyncio.to_thread(genai.get_file, uploaded_file.name)
@@ -540,30 +555,28 @@ async def handle_files(client: Client, message: Message):
             return
 
         file_type = None
+        mime_type = None
 
         if message.video or message.video_note:
-            file_type, file_path = (
-                "video",
-                await client.download_media(message.video or message.video_note),
-            )
+            media = message.video or message.video_note
+            file_type, file_path = "video", await client.download_media(media)
+            mime_type = getattr(media, "mime_type", None)
         elif message.audio or message.voice:
-            file_type, file_path = (
-                "audio",
-                await client.download_media(message.audio or message.voice),
-            )
+            media = message.audio or message.voice
+            file_type, file_path = "audio", await client.download_media(media)
+            mime_type = getattr(media, "mime_type", None)
         elif message.document and message.document.file_name.endswith(".pdf"):
             file_type, file_path = "pdf", await client.download_media(message.document)
+            mime_type = getattr(message.document, "mime_type", None) or "application/pdf"
         elif message.document:
-            file_type, file_path = (
-                "document",
-                await client.download_media(message.document),
-            )
+            file_type, file_path = "document", await client.download_media(message.document)
+            mime_type = getattr(message.document, "mime_type", None)
 
         if file_path and file_type:
             chat_history = get_chat_history(topic_id, caption or f"[{file_type}]", user_name)
             chat_context = "\n".join(chat_history)
 
-            uploaded_file = await upload_file_to_gemini(file_path, file_type)
+            uploaded_file = await upload_file_to_gemini(file_path, file_type, mime_type=mime_type)
             prompt = (
                 f"{chat_context}\n\nUser has sent a {file_type}."
                 f"{' Caption: ' + caption if caption else ''} Generate a response based on the content of the {file_type}, and our chat context, always follow role."
