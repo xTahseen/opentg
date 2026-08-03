@@ -158,7 +158,11 @@ async def media_slot(client: Client, message: Message):
             elif msg.video:
                 msgs.append(InputMediaVideo(msg.video.file_id, caption=msg.caption or ""))
         if msgs:
-            await client.send_media_group(message.chat.id, msgs)
+            await client.send_media_group(
+                chat_id=message.chat.id,
+                media=msgs,
+                message_thread_id=message.message_thread_id
+            )
             await message.delete()
         return
     msg_id = saved.get("message_id")
@@ -169,15 +173,21 @@ async def media_slot(client: Client, message: Message):
                 file_path = await client.download_media(original)
                 if original.photo:
                     sent_msg = await client.send_photo(
-                        message.chat.id,
-                        file_path,
-                        ttl_seconds=ttl_seconds
+                        chat_id=message.chat.id,
+                        photo=file_path,
+                        caption=original.caption or "",
+                        caption_entities=original.caption_entities,
+                        ttl_seconds=ttl_seconds,
+                        message_thread_id=message.message_thread_id
                     )
                 else:
                     sent_msg = await client.send_video(
-                        message.chat.id,
-                        file_path,
-                        ttl_seconds=ttl_seconds
+                        chat_id=message.chat.id,
+                        video=file_path,
+                        caption=original.caption or "",
+                        caption_entities=original.caption_entities,
+                        ttl_seconds=ttl_seconds,
+                        message_thread_id=message.message_thread_id
                     )
                 if os.path.exists(file_path):
                     os.remove(file_path)
@@ -188,7 +198,8 @@ async def media_slot(client: Client, message: Message):
             sent_msg = await client.copy_message(
                 chat_id=message.chat.id,
                 from_chat_id=chat_id,
-                message_id=msg_id
+                message_id=msg_id,
+                message_thread_id=message.message_thread_id
             )
     except Exception as e:
         await message.edit("Send failed")
