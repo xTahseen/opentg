@@ -26,53 +26,49 @@ def google_translate(query, source_lang="auto", target_lang="en"):
         raise Exception("Failed to fetch translation.")
 
 def auto_translate_filter(_, __, message: Message):
-    """Filter to process messages only if translation is enabled for the chat."""
-    lang_code = db.get("custom.gtranslate", str(message.chat.id), None)
+    lang_code = db.get("custom.translate", str(message.chat.id), None)
     return bool(lang_code) and not message.text.startswith(prefix)
 
 auto_translate_filter = create(auto_translate_filter)
 
 @Client.on_message(filters.command(["setlang"], prefix))
 async def set_language(_, message: Message):
-    """Set the preferred language for a chat."""
     if len(message.command) < 2:
         await message.edit(
-            f"<b>Usage:</b> <code>{prefix}setglang [language_code]</code>\n\n"
+            f"<b>Usage:</b> <code>{prefix}setlang [language_code]</code>\n\n"
         )
         return
 
     lang_code = message.text.split(maxsplit=1)[1].lower()
-    db.set("custom.gtranslate", str(message.chat.id), lang_code)
+    db.set("custom.translate", str(message.chat.id), lang_code)
     await message.edit(f"<b>Language has been set to</b> <code>[{lang_code}]</code>.")
 
 @Client.on_message(filters.command(["lang"], prefix))
 async def language_status(_, message: Message):
-    """Show the current language or turn off auto-translation."""
     chat_id = str(message.chat.id)
     command_text = message.text.strip().lower()
 
-    if command_text == f"{prefix}glang":
-        lang_code = db.get("custom.gtranslate", chat_id, None)
+    if command_text == f"{prefix}lang":
+        lang_code = db.get("custom.translate", chat_id, None)
         if lang_code:
             await message.edit(f"<b>Current language</b> <code>[{lang_code}]</code>.")
         else:
             await message.edit(f"<code>No language set.</code>")
-    elif command_text == f"{prefix}glang off":
-        result = db.remove("custom.gtranslate", chat_id)
+    elif command_text == f"{prefix}lang off":
+        result = db.remove("custom.translate", chat_id)
         if result:
             await message.edit("Auto-translation has been turned off for this chat.")
         else:
             await message.edit("<b>Auto-translation is disabled.</b>")
     else:
-        await message.edit(f"<b>Usage:</b> \n<code>{prefix}glang</code> [check language] \n<code>{prefix}glang off</code> [turn off auto-translation].")
+        await message.edit(f"<b>Usage:</b> \n<code>{prefix}lang</code> [check language] \n<code>{prefix}lang off</code> [turn off auto-translation].")
 
 @Client.on_message(filters.text & auto_translate_filter)
 async def auto_translate(_, message: Message):
-    """Automatically translate and edit messages in chats with a set language."""
     if message.from_user and not message.from_user.is_self:
         return
 
-    lang_code = db.get("custom.gtranslate", str(message.chat.id), None)
+    lang_code = db.get("custom.translate", str(message.chat.id), None)
     if not lang_code:
         return
 
