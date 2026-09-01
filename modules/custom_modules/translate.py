@@ -1,27 +1,27 @@
+import json
 import requests
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message
 from utils import modules_help, prefix
 
 def google_translate(query, source_lang="auto", target_lang="en"):
-    url = "https://translate.google.com/translate_a/single"
-    params = {
-        "client": "gtx",
-        "sl": source_lang,
-        "tl": target_lang,
-        "dt": "t",
-        "q": query
-    }
+    url = "https://translate-pa.googleapis.com/v1/translateHtml"
+    payload = json.dumps([[[query], source_lang, target_lang], "te_lib"])
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        "Content-Type": "application/json+protobuf",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Referer": "https://translate.google.com/",
+        "x-goog-api-key": "AIzaSyATBXajvzQLTDHEQbcpq0Ihe0vWDHmO520",
     }
-    response = requests.get(url, params=params, headers=headers)
+    response = requests.post(url, data=payload, headers=headers)
     if response.status_code == 200:
         response.encoding = "utf-8"
         data = response.json()
-        return "".join([item[0] for item in data[0]])
+        translated_text = "".join(data[0])
+        detected_lang = data[1][0] if len(data) > 1 and data[1] else source_lang
+        return translated_text, detected_lang
     else:
-        raise Exception("Failed to fetch translation.")
+        raise Exception(f"Failed to fetch translation ({response.status_code}): {response.text[:200]}")
 
 @Client.on_message(filters.command(["tr"], prefix))
 async def translate_text(client, message: Message):
@@ -46,8 +46,11 @@ async def translate_text(client, message: Message):
     processing_message = await (message.edit("Translating...") if message.from_user.is_self else message.reply("Translating..."))
 
     try:
-        translated_text = google_translate(query, target_lang=target_lang)
-        await processing_message.edit(f"**Translated Text ({target_lang.upper()}):**\n{translated_text}", parse_mode=enums.ParseMode.MARKDOWN)
+        translated_text, detected_lang = google_translate(query, target_lang=target_lang)
+        await processing_message.edit(
+            f"**Translated Text ({detected_lang.upper()} → {target_lang.upper()}):**\n{translated_text}",
+            parse_mode=enums.ParseMode.MARKDOWN,
+        )
     except Exception as e:
         await processing_message.edit(f"Failed to translate the text: {str(e)}")
 
