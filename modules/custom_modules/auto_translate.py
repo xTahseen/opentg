@@ -1,3 +1,4 @@
+import json
 import requests
 from urllib.parse import quote
 from pyrogram import Client, filters
@@ -7,24 +8,21 @@ from utils import modules_help, prefix
 from utils.db import db
 
 def google_translate(query, source_lang="auto", target_lang="en"):
-    url = "https://translate.google.com/translate_a/single"
-    params = {
-        "client": "gtx",
-        "sl": source_lang,
-        "tl": target_lang,
-        "dt": "t",
-        "q": query
-    }
+    url = "https://translate-pa.googleapis.com/v1/translateHtml"
+    payload = json.dumps([[[query], source_lang, target_lang], "te_lib"])
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        "Content-Type": "application/json+protobuf",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Referer": "https://translate.google.com/",
+        "x-goog-api-key": "AIzaSyATBXajvzQLTDHEQbcpq0Ihe0vWDHmO520",
     }
-    response = requests.get(url, params=params, headers=headers)
+    response = requests.post(url, data=payload, headers=headers)
     if response.status_code == 200:
         response.encoding = "utf-8"
         data = response.json()
-        return "".join([item[0] for item in data[0]])
+        return "".join(data[0])
     else:
-        raise Exception("Failed to fetch translation.")
+        raise Exception(f"Failed to fetch translation ({response.status_code}): {response.text[:200]}")
 
 def auto_translate_filter(_, __, message: Message):
     lang_code = db.get("custom.translate", str(message.chat.id), None)
