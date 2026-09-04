@@ -122,6 +122,90 @@ async def rename_topic(client: Client, message: Message):
         await sleep(1)
         return await status_msg.delete()
 
+@Client.on_message(filters.command(["mtopic", "mt"], prefix) & filters.me, group=2)
+async def find_topic(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.edit(f"<b>Usage:</b> <code>{prefix}mtopic [message_id]</code>")
+
+    try:
+        msg_id = int(message.command[1])
+    except ValueError:
+        status_msg = await message.edit("<b>Invalid message ID.</b>")
+        await sleep(1)
+        return await status_msg.delete()
+
+    chat_id = db.get("custom.mlog", "chat")
+    if not chat_id:
+        status_msg = await message.edit(
+            f"<b>No Chat ID is set. Use {prefix}msetchat to set the Chat ID.</b>"
+        )
+        await sleep(1)
+        return await status_msg.delete()
+
+    await message.edit("<b>Looking up message...</b>")
+
+    try:
+        target_msg = await client.get_messages(chat_id, msg_id)
+    except Exception as e:
+        status_msg = await message.edit(f"<b>Error fetching message:</b> {str(e)}")
+        await sleep(1)
+        return await status_msg.delete()
+
+    if not target_msg or target_msg.empty:
+        status_msg = await message.edit(f"<b>No message found with ID {msg_id}.</b>")
+        await sleep(1)
+        return await status_msg.delete()
+
+    topic_id = target_msg.message_thread_id
+    if not topic_id:
+        status_msg = await message.edit("<b>That message isn't inside any topic (General chat).</b>")
+        await sleep(2)
+        return await status_msg.delete()
+
+    group_data = get_group_data(chat_id)
+    user_topics = group_data.get("user_topics", {})
+    owner_user_id = next((uid for uid, tid in user_topics.items() if tid == topic_id), None)
+
+    sender_name = None
+    if target_msg.from_user:
+        sender_name = target_msg.from_user.first_name
+    elif target_msg.sender_chat:
+        sender_name = target_msg.sender_chat.title
+
+    info_lines = [f"<b>📌 Found message {msg_id}</b>", f"<b>Topic ID:</b> <code>{topic_id}</code>"]
+    if owner_user_id:
+        info_lines.append(f"<b>Logged User ID:</b> <code>{owner_user_id}</code>")
+    if sender_name:
+        info_lines.append(f"<b>Sender:</b> {sender_name}")
+
+    try:
+        await client.send_message(
+            chat_id=chat_id,
+            message_thread_id=topic_id,
+            reply_to_message_id=msg_id,
+            text="\n".join(info_lines),
+        )
+        status_msg = await message.edit(f"<b>✅ Replied inside topic {topic_id}.</b>")
+    except Exception as e:
+        err = str(e)
+        if "TOPIC_CLOSED" in err:
+            try:
+                await client.reopen_forum_topic(chat_id=chat_id, topic_id=topic_id)
+                await client.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=topic_id,
+                    reply_to_message_id=msg_id,
+                    text="\n".join(info_lines),
+                )
+                status_msg = await message.edit(f"<b>✅ Reopened & replied inside topic {topic_id}.</b>")
+            except Exception as e2:
+                status_msg = await message.edit(f"<b>Error:</b> {str(e2)}")
+        else:
+            status_msg = await message.edit(f"<b>Error:</b> {err}")
+
+    await sleep(1)
+    await status_msg.delete()
+
 @Client.on_message(
     mlog_enabled
     & filters.incoming
@@ -203,4 +287,6 @@ modules_help["mlog"] = {
     "mlog [on/off]": "Enable or disable media logging",
     "msetchat [chat_id]": "Set the chat ID for media logging",
     "mrename [user_id]": "Rename a user's topic",
+    "mtopic [message_id]": "Reply inside the topic a given message belongs to (uses saved mlog chat)",
+    "mt [message_id]": "Alias for mtopic",
 }
