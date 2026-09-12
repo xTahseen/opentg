@@ -1,4 +1,5 @@
 import os
+import mimetypes
 import asyncio
 from PIL import Image
 from pyrogram import Client, filters, enums
@@ -30,8 +31,33 @@ def _valid_file(reply, file_type=None):
         or getattr(reply, "document", None)
     )
 
-async def _upload_file(file_path, file_type):
-    uploaded_file = genai.upload_file(file_path)
+def _guess_mime_type(reply, file_path):
+    """
+    Telegram media objects usually carry their own mime_type (especially
+    voice notes, which Pyrogram saves as .oga/.ogg without a reliable
+    extension). Fall back to guessing from the file extension, and finally
+    to a sane default per media kind so genai.upload_file never has to guess.
+    """
+    for attr in ("voice", "audio", "video", "video_note", "document"):
+        media = getattr(reply, attr, None)
+        mime = getattr(media, "mime_type", None) if media else None
+        if mime:
+            return mime
+
+    guessed, _ = mimetypes.guess_type(file_path)
+    if guessed:
+        return guessed
+
+    if reply.voice or (reply.audio and file_path.endswith((".oga", ".ogg"))):
+        return "audio/ogg"
+    if reply.audio:
+        return "audio/mpeg"
+    if reply.video or reply.video_note:
+        return "video/mp4"
+    return "application/octet-stream"
+
+async def _upload_file(file_path, file_type, mime_type=None):
+    uploaded_file = genai.upload_file(file_path, mime_type=mime_type)
     while uploaded_file.state.name == "PROCESSING":
         await asyncio.sleep(2)
         uploaded_file = genai.get_file(uploaded_file.name)
@@ -48,16 +74,19 @@ async def prepare_input_data(reply, file_path, prompt):
             return [prompt, img]
 
     if reply.video or reply.video_note:
-        return [prompt, await _upload_file(file_path, "video")]
+        mime_type = _guess_mime_type(reply, file_path)
+        return [prompt, await _upload_file(file_path, "video", mime_type=mime_type)]
 
     if reply.audio or reply.voice:
-        return [f"{prompt} (This is an audio/voice file.)", await _upload_file(file_path, "audio")]
+        mime_type = _guess_mime_type(reply, file_path)
+        return [f"{prompt} (This is an audio/voice file.)", await _upload_file(file_path, "audio", mime_type=mime_type)]
 
     if reply.document and file_path.endswith(".pdf"):
-        return [prompt, await _upload_file(file_path, "PDF")]
+        return [prompt, await _upload_file(file_path, "PDF", mime_type="application/pdf")]
 
     if reply.document:
-        return [await _upload_file(file_path, "document"), prompt]
+        mime_type = _guess_mime_type(reply, file_path)
+        return [await _upload_file(file_path, "document", mime_type=mime_type), prompt]
 
     raise ValueError("Unsupported file type")
 
