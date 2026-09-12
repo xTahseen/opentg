@@ -32,12 +32,6 @@ def _valid_file(reply, file_type=None):
     )
 
 def _guess_mime_type(reply, file_path):
-    """
-    Telegram media objects usually carry their own mime_type (especially
-    voice notes, which Pyrogram saves as .oga/.ogg without a reliable
-    extension). Fall back to guessing from the file extension, and finally
-    to a sane default per media kind so genai.upload_file never has to guess.
-    """
     for attr in ("voice", "audio", "video", "video_note", "document"):
         media = getattr(reply, attr, None)
         mime = getattr(media, "mime_type", None) if media else None
